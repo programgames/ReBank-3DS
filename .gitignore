@@ -3,6 +3,7 @@ middleend/
 deploy/
 compose.yaml
 app/build/
+app/tests/build/
 app/config/client-secret.mk
 app/config/client-secret.dev.mk
 app/config/server.dev.mk
