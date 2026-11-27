@@ -85,13 +85,14 @@ void GameSelectScreen::update(const InputFrame& input) {
         refresh(true);
         return;
     }
+    const CursorDirection direction = directions_.next(input);
     if (games_.empty()) {
         return;
     }
-    if (input.pressed(KEY_LEFT | KEY_L)) {
+    if (direction == CursorDirection::Left || input.pressed(KEY_L)) {
         select(previousIndex(index_, games_.size()), -1);
     }
-    if (input.pressed(KEY_RIGHT | KEY_R)) {
+    if (direction == CursorDirection::Right || input.pressed(KEY_R)) {
         select((index_ + 1) % games_.size(), 1);
     }
     if (input.pressed(KEY_A) || input.tapped(SelectedCard)) {

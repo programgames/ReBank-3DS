@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bank/selection/DirectionRepeat.hpp"
 #include "gui/Screen.hpp"
 #include "gui/icons/IconTexture.hpp"
 #include "gui/icons/TitleIcon.hpp"
@@ -57,6 +58,7 @@ private:
     std::vector<Tile> tiles_;
     std::vector<std::unique_ptr<IconTexture>> icons_;
     std::size_t focus_ = 0;
+    DirectionRepeat directions_;
     std::size_t page_ = 0;
     AsyncTask<IconList> iconTask_;
     bool iconsRequested_ = false;

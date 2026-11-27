@@ -7,31 +7,7 @@
 
 namespace Gui {
 namespace {
-constexpr std::size_t MaxLineLength = 42;
-constexpr std::string_view Ellipsis = "...";
-
-std::vector<std::string> wrapLines(std::string_view text, std::size_t maxLines) {
-    std::vector<std::string> lines;
-    while (!text.empty() && lines.size() < maxLines) {
-        if (text.size() <= MaxLineLength) {
-            lines.emplace_back(text);
-            return lines;
-        }
-        std::size_t split = text.rfind(' ', MaxLineLength);
-        if (split == std::string_view::npos || split == 0) {
-            split = MaxLineLength;
-        }
-        lines.emplace_back(text.substr(0, split));
-        text.remove_prefix(split);
-        text.remove_prefix(std::min(text.find_first_not_of(' '), text.size()));
-    }
-    if (!text.empty() && !lines.empty()) {
-        std::string& last = lines.back();
-        last.resize(std::min(last.size(), MaxLineLength - Ellipsis.size()));
-        last += Ellipsis;
-    }
-    return lines;
-}
+constexpr float MessageWidth = 302.0F - 12.0F - 36.0F; // dialog right edge, right margin, text left edge
 }
 
 void drawErrorDialog(UiRenderer& ui, const ErrorNotice& notice, std::string_view fallbackMessage,
@@ -48,9 +24,9 @@ void drawErrorDialog(UiRenderer& ui, const ErrorNotice& notice, std::string_view
         ui.drawText(notice.location(), 36.0F, 90.0F, 0.38F, Muted);
     }
     const std::string_view message = notice.message().empty() ? fallbackMessage : notice.message();
-    const std::vector<std::string> lines = wrapLines(message, hasSubject ? 4 : 6);
     const float top = hasSubject ? 116.0F : 76.0F;
     const float size = hasSubject ? 0.36F : 0.38F;
+    const std::vector<std::string> lines = ui.wrap(message, size, MessageWidth, hasSubject ? 4 : 6);
     for (std::size_t index = 0; index < lines.size(); ++index) {
         ui.drawText(lines[index], 36.0F, top + static_cast<float>(index) * 15.0F, size, hasSubject ? HeaderInk : Ink);
     }

@@ -173,10 +173,13 @@ void AuthFormScreen::activate() {
 }
 
 void AuthFormScreen::update(const InputFrame& input) {
+    // Track held directions even while signing in, so a stick held through it does not jump at once.
+    const CursorDirection direction = directions_.next(input);
     if (app_.navigator.authRunning()) {
         return;
     }
-    if (const int step = input.verticalStep(); step != 0) {
+    if (direction == CursorDirection::Up || direction == CursorDirection::Down) {
+        const int step = direction == CursorDirection::Up ? -1 : 1;
         const auto count = static_cast<int>(itemCount());
         focus_ = static_cast<std::size_t>(((static_cast<int>(focus_) + step) % count + count) % count);
     }

@@ -12,13 +12,16 @@
 using namespace Gui;
 
 namespace {
-constexpr auto Lang = pksm::Language::ENG;
 constexpr float Top = 8.0F;
 constexpr float RowHeight = 15.0F;
 constexpr float Left = BankLayout::CloudGrid.right();
 constexpr float Width = 400.0F - Left;
 constexpr float CenterX = Left + Width * 0.5F;
 constexpr float ValueRight = 400.0F - 8.0F;
+constexpr float LabelLeft = Left + 16.0F;
+constexpr float LabelGap = 6.0F;
+constexpr float LabelShare = 0.6F;
+constexpr float RowTextWidth = ValueRight - LabelLeft - LabelGap; // ~137 px column minus margins
 constexpr float GenderScale = 0.8F;
 constexpr float TypeBannerHeight = 12.0F;
 constexpr float TypeBannerGap = 4.0F;
@@ -38,11 +41,12 @@ TextId emptySlotText(StoragePane pane) {
 }
 
 void PokemonInfoPanel::render(const PokemonSummary& focused, StoragePane pane) {
+    const pksm::Language language = text_.dataLanguage();
     if (!focused.occupied()) {
         ui_.drawCentered(text_.get(emptySlotText(pane)), CenterX, Top + 16.0F, 0.4F, HeaderInk);
         return;
     }
-    const std::string speciesName = pksm::Species(focused.species).localize(Lang);
+    const std::string speciesName = pksm::Species(focused.species).localize(language);
     drawHeader(focused, speciesName);
 
     Row row{Top + 18.0F, 0};
@@ -51,26 +55,27 @@ void PokemonInfoPanel::render(const PokemonSummary& focused, StoragePane pane) {
     if (!focused.nickname.empty() && focused.nickname != speciesName) {
         drawRow(row, text_.get(TextId::InfoNickname), focused.nickname, 0.40F);
     }
-    drawRow(row, text_.get(TextId::InfoItem), focused.heldItem != 0 ? i18n::item(Lang, focused.heldItem) : "", 0.38F);
-    drawRow(row, text_.get(TextId::InfoAbility), i18n::ability(Lang, focused.ability), 0.38F);
-    drawRow(row, text_.get(TextId::InfoNature), i18n::nature(Lang, focused.nature), 0.38F);
+    drawRow(row, text_.get(TextId::InfoItem), focused.heldItem != 0 ? i18n::item(language, focused.heldItem) : "", 0.38F);
+    drawRow(row, text_.get(TextId::InfoAbility), i18n::ability(language, focused.ability), 0.38F);
+    drawRow(row, text_.get(TextId::InfoNature), i18n::nature(language, focused.nature), 0.38F);
     if (focused.language != pksm::Language::None) {
         drawRow(row, text_.get(TextId::InfoLanguage), i18n::langString(focused.language), 0.34F);
     }
     drawTypeRow(row, focused);
-    if (const std::string origin = i18n::game(Lang, focused.originGame); !origin.empty()) {
+    if (const std::string origin = i18n::game(language, focused.originGame); !origin.empty()) {
         drawRow(row, text_.get(TextId::InfoOrigin), origin, 0.40F);
     }
     row.y += 4.0F;
     for (const pksm::Move& move : focused.moves) {
-        drawRow(row, text_.get(TextId::InfoMove), move == pksm::Move::None ? "" : i18n::move(Lang, move), 0.38F);
+        drawRow(row, text_.get(TextId::InfoMove), move == pksm::Move::None ? "" : i18n::move(language, move), 0.38F);
         row.y += 1.0F;
     }
 }
 
 void PokemonInfoPanel::drawHeader(const PokemonSummary& focused, const std::string& speciesName) {
-    const std::string header = "#" + std::to_string(focused.species) + " "
-        + (speciesName.empty() ? focused.nickname : speciesName);
+    const std::string header = ui_.fit("#" + std::to_string(focused.species) + " "
+                                           + (speciesName.empty() ? focused.nickname : speciesName),
+                                       0.46F, Width - 24.0F);
     if (resources_.nameDexPlate) {
         const C2D_Image plate = C2D_SpriteSheetGetImage(resources_.nameDexPlate, 0);
         C2D_DrawImageAt(plate, Left, Top - 4.0F, 0.13F, nullptr, Width / static_cast<float>(plate.subtex->width), 0.85F);
@@ -106,8 +111,12 @@ void PokemonInfoPanel::drawRow(Row& row, std::string_view label, std::string_vie
         C2D_DrawImageAt(dot, Left + 6.0F, row.y + RowHeight * 0.5F - static_cast<float>(dot.subtex->height) * 0.5F,
                         0.13F);
     }
-    ui_.drawText(label, Left + 16.0F, row.y + 2.0F, fontSize, HeaderInk);
-    ui_.drawRight(value.empty() ? Placeholder : value, ValueRight, row.y + 2.0F, fontSize, HeaderInk);
+    // The label keeps at most 60% of the row, the value gets the rest.
+    const std::string shownLabel = ui_.fit(label, fontSize, RowTextWidth * LabelShare);
+    const float valueWidth = RowTextWidth - ui_.measure(shownLabel, fontSize);
+    ui_.drawText(shownLabel, LabelLeft, row.y + 2.0F, fontSize, HeaderInk);
+    ui_.drawRight(ui_.fit(value.empty() ? Placeholder : value, fontSize, valueWidth), ValueRight, row.y + 2.0F,
+                  fontSize, HeaderInk);
     row.y += RowHeight;
     ++row.index;
 }
@@ -115,7 +124,8 @@ void PokemonInfoPanel::drawRow(Row& row, std::string_view label, std::string_vie
 void PokemonInfoPanel::drawTypeRow(Row& row, const PokemonSummary& focused) {
     const C2D_SpriteSheet sheet = resources_.typeBanners;
     drawStripe(row);
-    ui_.drawText(text_.get(TextId::InfoType), Left + 16.0F, row.y + 2.0F, 0.40F, HeaderInk);
+    ui_.drawText(ui_.fit(text_.get(TextId::InfoType), 0.40F, RowTextWidth * LabelShare), LabelLeft, row.y + 2.0F,
+                 0.40F, HeaderInk);
 
     const float nativeHeight = typeBannerHeight(sheet, focused.type1);
     const float scale = nativeHeight > 0.0F ? TypeBannerHeight / nativeHeight : 1.0F;
