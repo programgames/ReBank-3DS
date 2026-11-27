@@ -6,6 +6,7 @@
 #include <citro2d.h>
 
 #include <optional>
+#include <utility>
 
 class PokemonSprites {
 public:
@@ -17,6 +18,9 @@ public:
 
 private:
     std::optional<C2D_Image> spriteOf(const PokemonSummary& summary) const;
+    std::pair<float, float> spriteSize(const std::optional<C2D_Image>& sprite) const;
+    void drawBody(const std::optional<C2D_Image>& sprite, float cx, float cy, float z, float width, float height,
+                  const C2D_ImageTint* tint) const;
 
     const GfxResources& resources_;
 };
