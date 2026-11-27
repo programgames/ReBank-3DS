@@ -3,7 +3,7 @@
 namespace {
 constexpr Translation build() {
     Translation text{};
-    text[at(TextId::Tagline)] = "Every Pokemon. Every game. One bank.";
+    text[at(TextId::Tagline)] = "Every Pokémon. Every game. One bank.";
     text[at(TextId::Login)] = "Login";
     text[at(TextId::Register)] = "Register";
     text[at(TextId::Username)] = "Username";
@@ -21,7 +21,7 @@ constexpr Translation build() {
     text[at(TextId::LoadingSearchingGames)] = "Searching save files...";
     text[at(TextId::LoadingReadingIcons)] = "Loading game icons...";
     text[at(TextId::LoadingReadingSave)] = "Loading save file...";
-    text[at(TextId::LoadingSearchingPokemon)] = "Searching Pokemon...";
+    text[at(TextId::LoadingSearchingPokemon)] = "Searching Pokémon...";
     text[at(TextId::LoadingBankData)] = "Loading bank data...";
     text[at(TextId::LoadingDetailInitializing)] = "Initializing...";
     text[at(TextId::LoadingDetailCheckingUpdates)] = "Downloading and verifying new versions securely...";
@@ -30,14 +30,14 @@ constexpr Translation build() {
     text[at(TextId::LoadingDetailSearchingGames)] = "Checking cartridge and installed games...";
     text[at(TextId::LoadingDetailReadingIcons)] = "Reading original game icons...";
     text[at(TextId::LoadingDetailReadingSave)] = "Opening local save file...";
-    text[at(TextId::LoadingDetailSearchingPokemon)] = "Reading box and Pokemon...";
+    text[at(TextId::LoadingDetailSearchingPokemon)] = "Reading box and Pokémon...";
     text[at(TextId::LoadingDetailLoadingBank)] = "Connecting to your bank...";
     text[at(TextId::LoadingProgressLabel)] = "Progress";
     text[at(TextId::LoadingAutoLoginDetected)] = "Autologin detected...";
     text[at(TextId::LoadingDetailAutoLoginDetected)] = "Logging you in automatically...";
     text[at(TextId::LoadingWelcomeBackPrefix)] = "Welcome back, ";
     text[at(TextId::TrashCan)] = "Trash Can";
-    text[at(TextId::TrashConfirmMessage)] = "Delete these Pokemon?";
+    text[at(TextId::TrashConfirmMessage)] = "Delete these Pokémon?";
     text[at(TextId::Yes)] = "Yes";
     text[at(TextId::No)] = "No";
     text[at(TextId::StatusFindingSaveGames)] = "Finding save games...";
@@ -71,12 +71,12 @@ constexpr Translation build() {
     text[at(TextId::PickupFailedTitle)] = "PICKUP FAILED";
     text[at(TextId::CannotSwap)] = "Cannot swap: {0}";
     text[at(TextId::SwapFailedTitle)] = "SWAP FAILED";
-    text[at(TextId::UnknownPokemon)] = "Unknown Pokemon";
-    text[at(TextId::PayloadUnreadable)] = "The Pokemon data could not be read.";
+    text[at(TextId::UnknownPokemon)] = "Unknown Pokémon";
+    text[at(TextId::PayloadUnreadable)] = "The Pokémon data could not be read.";
     text[at(TextId::SwapCancelledBoxChanged)] = "Box changed, swap cancelled.";
     text[at(TextId::SwapCancelled)] = "Swap cancelled.";
     text[at(TextId::FinishAreaFirst)] = "Finish or cancel the area first (B).";
-    text[at(TextId::DropFirst)] = "Drop the Pokemon first.";
+    text[at(TextId::DropFirst)] = "Drop the Pokémon first.";
     text[at(TextId::NothingToCommit)] = "Nothing to commit.";
     text[at(TextId::BoxNameHint)] = "Box name";
     text[at(TextId::DefaultBankName)] = "Bank {0}";
@@ -110,7 +110,7 @@ constexpr Translation build() {
     text[at(TextId::IssueDataNotLoaded)] = "Its data was not loaded yet, so it stayed where it was. Try again.";
     text[at(TextId::IssueOriginUnconfirmed)] = "Its origin could not be confirmed, so nothing was changed for it.";
     text[at(TextId::IssueNotInTrash)] = "It would have been removed without going through the trash, so it stayed where it was.";
-    text[at(TextId::IssueLinkedToHeldBack)] = "It is linked to a Pokemon that could not be moved safely, so it stayed where it was.";
+    text[at(TextId::IssueLinkedToHeldBack)] = "It is linked to a Pokémon that could not be moved safely, so it stayed where it was.";
     text[at(TextId::IssueNoParkingSlot)] = "There is no free box slot to park it during the swap, so it stayed where it was.";
     text[at(TextId::IssueCloudMoveFailed)] = "The cloud did not confirm this move ({0}).";
     text[at(TextId::IssueWriteFailed)] = "It could not be written into this save, so nothing was changed for it.";
@@ -118,9 +118,9 @@ constexpr Translation build() {
     text[at(TextId::IssueCloudRefused)] = "The cloud refused it: {0} It stayed in your save.";
     text[at(TextId::IssueUploadUnconfirmed)] = "The connection dropped during the upload. It stayed in your save; check {0} for a second copy.";
     text[at(TextId::IssueUploadNotStored)] = "The upload did not go through. It stayed in your save.";
-    text[at(TextId::IssueCloudSlotDifferent)] = "The cloud slot holds a different Pokemon, so it stayed in your save.";
-    text[at(TextId::IssueCloudSlotTrading)] = "This Pokemon is offered in a trade right now, so it stayed in the cloud.";
-    text[at(TextId::IssueCloudClaimFailed)] = "The cloud could not confirm this Pokemon, so nothing was moved.";
+    text[at(TextId::IssueCloudSlotDifferent)] = "The cloud slot holds a different Pokémon, so it stayed in your save.";
+    text[at(TextId::IssueCloudSlotTrading)] = "This Pokémon is offered in a trade right now, so it stayed in the cloud.";
+    text[at(TextId::IssueCloudClaimFailed)] = "The cloud could not confirm this Pokémon, so nothing was moved.";
     text[at(TextId::IssueUploadUndone)] = "The final save step failed, so its upload was undone. It stayed in your save.";
     text[at(TextId::IssueUploadNotUndone)] = "The final save step failed and its cloud copy could not be removed. It is now in your save and in {0}.";
     text[at(TextId::IssueSwapCancelled)] = "Its swap partner could not be uploaded, so the swap was cancelled and it stayed in the cloud.";
@@ -166,7 +166,7 @@ constexpr Translation build() {
     text[at(TextId::Ok)] = "OK";
     text[at(TextId::CartridgeLabel)] = "CARTRIDGE";
     text[at(TextId::DigitalLabel)] = "DIGITAL";
-    text[at(TextId::ChooseTitle)] = "Choose the Pokemon title to use";
+    text[at(TextId::ChooseTitle)] = "Choose the Pokémon title to use";
     text[at(TextId::Logout)] = "Logout";
     text[at(TextId::StatusWaitingForLoader)] = "Finishing the current check, then the game opens...";
     text[at(TextId::InvalidUsernameTitle)] = "INVALID USERNAME";
@@ -221,12 +221,12 @@ constexpr Translation build() {
     text[at(TextId::PluginsResultInstalled)] = "installed";
     text[at(TextId::PluginsResultFailed)] = "failed";
     text[at(TextId::PluginsPage)] = "{0} / {1}";
-    text[at(TextId::PluginGameX)] = "Pokemon X";
-    text[at(TextId::PluginGameY)] = "Pokemon Y";
+    text[at(TextId::PluginGameX)] = "Pokémon X";
+    text[at(TextId::PluginGameY)] = "Pokémon Y";
     text[at(TextId::PluginGameOmegaRuby)] = "Omega Ruby";
     text[at(TextId::PluginGameAlphaSapphire)] = "Alpha Sapphire";
-    text[at(TextId::PluginGameSun)] = "Pokemon Sun";
-    text[at(TextId::PluginGameMoon)] = "Pokemon Moon";
+    text[at(TextId::PluginGameSun)] = "Pokémon Sun";
+    text[at(TextId::PluginGameMoon)] = "Pokémon Moon";
     text[at(TextId::PluginGameUltraSun)] = "Ultra Sun";
     text[at(TextId::PluginGameUltraMoon)] = "Ultra Moon";
     text[at(TextId::PluginGameAnimalCrossing)] = "Animal Crossing";

@@ -1,9 +1,12 @@
 // Host-side tests for the UI text rules: line breaking on code points and the translation tables.
 
 #include "gui/TextLayout.hpp"
+#include "i18n/Translation.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -77,9 +80,49 @@ void fitKeepsOrCutsWithEllipsis() {
     check(TextLayout::fitWithEllipsis("ab cdef", 6.0F, codePoints) == "ab...", "fit trims the space before ...");
     check(validUtf8(TextLayout::fitWithEllipsis("éééééééé", 5.0F, codePoints)), "fit result is valid UTF-8");
 }
+
+std::vector<std::string> placeholders(std::string_view text) {
+    std::vector<std::string> found;
+    for (std::size_t index = 0; index + 2 < text.size(); ++index) {
+        if (text[index] == '{' && text[index + 1] >= '0' && text[index + 1] <= '9' && text[index + 2] == '}') {
+            found.emplace_back(text.substr(index, 3));
+        }
+    }
+    std::sort(found.begin(), found.end());
+    return found;
+}
+
+// Every language defines every entry, keeps the English placeholders, and spells Pokémon with its accent.
+void translationsAreComplete() {
+    const Translation& english = Translations::english();
+    const std::pair<const char*, const Translation*> languages[] = {
+        {"english", &english},
+        {"german", &Translations::german()},
+        {"french", &Translations::french()},
+        {"spanish", &Translations::spanish()},
+        {"italian", &Translations::italian()},
+        {"portuguese", &Translations::portuguese()},
+    };
+    for (const auto& [name, table] : languages) {
+        std::size_t missing = 0;
+        for (std::size_t id = 0; id < english.size(); ++id) {
+            const std::string_view text = (*table)[id];
+            const std::string where = std::string(name) + " entry " + std::to_string(id);
+            if (text.empty()) {
+                ++missing;
+                continue;
+            }
+            check(validUtf8(text), where + " is valid UTF-8");
+            check(placeholders(text) == placeholders(english[id]), where + " keeps the English placeholders");
+            check(text.find("Pokemon") == std::string_view::npos, where + " writes Pokémon with its accent");
+        }
+        check(missing == 0, std::string(name) + " misses " + std::to_string(missing) + " entries");
+    }
+}
 }
 
 int main() {
+    translationsAreComplete();
     wrapBreaksAtSpacesAndNewlines();
     wrapCutsLongWordsBetweenCodePoints();
     wrapKeepsAWideFirstCodePoint();
