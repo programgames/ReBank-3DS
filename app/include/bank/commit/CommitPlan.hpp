@@ -66,7 +66,11 @@ enum class IssueReason : std::uint8_t {
     DownloadNotRemoved,
     CloudRemoveFailed,
     CloudSlotTrading,
-    CloudClaimFailed
+    CloudClaimFailed,
+    MovedInCloud,
+    RemovalUnconfirmed,
+    PartyKept,
+    SaveUnconfirmed
 };
 
 const char* describeReason(IssueReason reason);
@@ -130,6 +134,8 @@ struct PlannedTransfer {
 struct CloudMoveStep {
     SlotRef from;
     SlotRef to;
+    std::size_t mover = 0;                // the transfer that moves
+    std::optional<std::size_t> displaced; // the transfer that the server swaps into `from`
 };
 
 struct HeldBackPokemon {
@@ -144,8 +150,10 @@ struct CommitPlan {
     std::vector<PlannedTransfer> transfers;
     std::vector<CloudMoveStep> cloudMoves;
     std::vector<HeldBackPokemon> heldBack;
+    // Every local slot the commit may change, with its occupant before the commit.
     LocalLayout baselineLayout;
-    LocalLayout stagedLayout;
+    PartySlots partyBaseline;
+    bool listBoxes = false;
 
     bool empty() const { return transfers.empty(); }
 };
@@ -154,6 +162,7 @@ struct LocalSlotProbe {
     std::size_t boxCount = 0;
     std::function<bool(std::size_t box, std::size_t slot)> occupied;
     std::size_t slotsPerBox = BoxSlotCount;
+    bool listBoxes = false; // Gen 1/2: a box is a list, packed on every write
 };
 
 CommitPlan planCommit(const CommitSnapshot& snapshot, const LocalSlotProbe& probe);

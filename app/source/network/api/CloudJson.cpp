@@ -37,6 +37,7 @@ void enrichFromPayload(PokemonSummary& summary, const std::vector<std::uint8_t>&
     if (!pkx || static_cast<std::uint16_t>(pkx->species()) == 0) {
         return;
     }
+    summary.egg = pkx->egg();
     summary.type1 = pkx->type1();
     summary.type2 = pkx->type2();
     summary.originGame = pkx->version();

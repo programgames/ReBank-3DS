@@ -30,6 +30,10 @@ TextId issueText(IssueReason reason) {
         case IssueReason::CloudRemoveFailed: return TextId::IssueCloudRemoveFailed;
         case IssueReason::CloudSlotTrading: return TextId::IssueCloudSlotTrading;
         case IssueReason::CloudClaimFailed: return TextId::IssueCloudClaimFailed;
+        case IssueReason::MovedInCloud: return TextId::IssueMovedInCloud;
+        case IssueReason::RemovalUnconfirmed: return TextId::IssueRemovalUnconfirmed;
+        case IssueReason::PartyKept: return TextId::IssuePartyKept;
+        case IssueReason::SaveUnconfirmed: return TextId::IssueSaveUnconfirmed;
     }
     return TextId::IssueLinkedToHeldBack;
 }
@@ -100,7 +104,7 @@ void CommitService::runCommit() {
     SaveAdapter& save = session_.saveAdapter;
     const LocalSlotProbe probe{save.boxCount(),
                                [&save](std::size_t box, std::size_t slot) { return save.slotOccupied(box, slot); },
-                               save.boxCapacity()};
+                               save.boxCapacity(), save.boxesAreLists()};
     const CommitPlan plan = planCommit(snapshot_, probe);
     DeviceCommitBackend backend(context_.api, save, accessToken_);
     CommitExecutor executor(plan, backend, [this](CommitPhase phase, int percent) {

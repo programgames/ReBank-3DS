@@ -41,6 +41,10 @@ public:
     std::optional<TrainerInfo> trainer() const;
     BoxSlots readBox(std::size_t box) const;
     bool slotOccupied(std::size_t box, std::size_t slot) const;
+    PokemonPayload readSlot(std::size_t box, std::size_t slot) const;
+    PokemonPayload readPartySlot(std::size_t slot) const;
+    // Gen 1/2 boxes are lists: every write packs them.
+    bool boxesAreLists() const;
     std::string boxName(std::size_t box) const;
     std::size_t boxCount() const;
     std::size_t boxCapacity() const;
@@ -53,8 +57,11 @@ public:
     std::size_t partyCount() const;
     bool clearPartySlot(std::size_t slot);
     bool writePartyPokemon(std::size_t slot, const PokemonPayload& payload);
-    bool writeSave(std::string& error, bool finalWrite = true);
+    // Packs the party, then writes the save. It succeeds when the disk holds the new image.
+    bool writeSave(std::string& error);
     bool discardUnsavedChanges(std::string& error);
+    // False after a failed write whose result could not be read back from the disk.
+    bool diskKnown() const;
 
 private:
     bool validBox(std::size_t box) const;
@@ -62,7 +69,7 @@ private:
     bool validPartySlot(std::size_t slot) const;
     std::uint8_t saveFormat() const;
     void beginPartyEdit();
-    void normalizeParty(bool compact);
+    void normalizeParty();
     template <typename Edit>
     bool edit(const char* action, Edit&& change);
     bool storeEmpty(const std::function<void(const pksm::PKX&)>& store);
@@ -74,4 +81,5 @@ private:
     std::vector<std::uint8_t> previousBuffer_;
     bool dirty_ = false;
     bool partyEdited_ = false;
+    bool diskUnknown_ = false;
 };

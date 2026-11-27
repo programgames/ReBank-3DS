@@ -47,6 +47,7 @@ struct PokemonSummary {
     pksm::Ability ability;
     pksm::Nature nature;
     pksm::Gender gender = pksm::Gender::Genderless;
+    bool egg = false;
 
     bool occupied() const { return species != 0; }
 };
