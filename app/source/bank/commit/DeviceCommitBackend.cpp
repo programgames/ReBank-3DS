@@ -96,9 +96,9 @@ ClaimBatchResult DeviceCommitBackend::claimCloud(const std::vector<ClaimItem>& i
     return result;
 }
 
-bool DeviceCommitBackend::writeLocal(const SlotRef& slot, const PokemonPayload& payload) {
-    return slot.kind == SlotKind::Party ? save_.writePartyPokemon(slot.slot, payload)
-                                        : save_.writePokemon(slot.box, slot.slot, payload);
+bool DeviceCommitBackend::writeLocal(const SlotRef& slot, const PokemonPayload& payload, bool fromCloud) {
+    return slot.kind == SlotKind::Party ? save_.writePartyPokemon(slot.slot, payload, fromCloud)
+                                        : save_.writePokemon(slot.box, slot.slot, payload, fromCloud);
 }
 
 bool DeviceCommitBackend::clearLocal(const SlotRef& slot) {

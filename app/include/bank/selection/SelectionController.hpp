@@ -47,7 +47,7 @@ private:
     SelectionState& state() { return session_.selection; }
     const SelectionState& state() const { return session_.selection; }
 
-    enum class Placement : std::uint8_t { Placed, Pending, Stalled, Occupied, WrongFormat, Count };
+    enum class Placement : std::uint8_t { Placed, Pending, Stalled, Occupied, WrongFormat, DataLoss, Count };
 
     void beginSelection();
     void grab(const std::vector<std::size_t>& originSlots);

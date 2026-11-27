@@ -2,6 +2,7 @@
 
 #include "save/catalog/GameCatalog.hpp"
 #include "save/pokemon/PokemonData.hpp"
+#include "save/pokemon/PokemonTransfer.hpp"
 #include "save/storage/SaveSource.hpp"
 
 #include <3ds.h>
@@ -46,13 +47,14 @@ public:
     std::size_t boxCapacity() const;
     std::size_t currentBox() const;
     std::uint8_t gameGeneration() const;
-    bool canImportPokemon(const PokemonPayload& payload) const;
+    PokemonTransfer::ImportCheck checkImport(const PokemonPayload& payload) const;
     bool clearSlot(std::size_t box, std::size_t slot);
-    bool writePokemon(std::size_t box, std::size_t slot, const PokemonPayload& payload);
+    // asTrade: update handler, egg met data and Pokedex the way a trade does. Off for moves inside this save.
+    bool writePokemon(std::size_t box, std::size_t slot, const PokemonPayload& payload, bool asTrade);
     PartySlots readParty() const;
     std::size_t partyCount() const;
     bool clearPartySlot(std::size_t slot);
-    bool writePartyPokemon(std::size_t slot, const PokemonPayload& payload);
+    bool writePartyPokemon(std::size_t slot, const PokemonPayload& payload, bool asTrade);
     bool writeSave(std::string& error, bool finalWrite = true);
     bool discardUnsavedChanges(std::string& error);
 

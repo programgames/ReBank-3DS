@@ -62,6 +62,13 @@ constexpr Translation build() {
     text[at(TextId::SignInAgain)] = "Please sign in again.";
     text[at(TextId::StillFetching)] = "Still fetching {0}...";
     text[at(TextId::GenerationIncompatible)] = "Gen {0} cannot enter Gen {1}.";
+    text[at(TextId::EggCannotChangeGeneration)] = "Eggs can't change generation.";
+    text[at(TextId::PokemonCorrupted)] = "{0} has corrupted data.";
+    text[at(TextId::PokemonNotInGame)] = "{0} can't exist in this game.";
+    text[at(TextId::LossHeldItem)] = "its held item";
+    text[at(TextId::LossMoves)] = "some moves";
+    text[at(TextId::LossHeldItemAndMoves)] = "its held item and some moves";
+    text[at(TextId::ConfirmDataLoss)] = "{0} will lose {1} here. Press A again to drop.";
     text[at(TextId::BankBoxLoading)] = "This bank box is still loading.";
     text[at(TextId::SlotUnavailable)] = "This game's boxes only have {0} slots.";
     text[at(TextId::FetchingOccupant)] = "Fetching occupant...";
@@ -95,6 +102,7 @@ constexpr Translation build() {
     text[at(TextId::PlaceReasonUnavailable)] = "{0} unavailable from the server";
     text[at(TextId::PlaceReasonOccupied)] = "{0} spot(s) occupied";
     text[at(TextId::PlaceReasonWrongFormat)] = "{0} can't enter this save";
+    text[at(TextId::PlaceReasonDataLoss)] = "{0} would lose data, drop them one by one";
     text[at(TextId::CommitRunning)] = "Committing changes...";
     text[at(TextId::CommitStartFailed)] = "Could not start the commit.";
     text[at(TextId::CommitSummary)] = "Uploaded {0}, downloaded {1}, moved {2}, removed {3}.";

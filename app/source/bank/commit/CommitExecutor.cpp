@@ -143,7 +143,7 @@ CommitExecutor::LayoutOutcome CommitExecutor::applyLayout(const LocalLayout& tar
         const auto receivedPayload = occupant ? received_.find(*occupant) : received_.end();
         const PokemonPayload* written = !occupant ? nullptr
             : receivedPayload != received_.end() ? &receivedPayload->second : &plan_.transfers[*occupant].payload;
-        const bool ok = occupant ? backend_.writeLocal(slot, *written)
+        const bool ok = occupant ? backend_.writeLocal(slot, *written, plan_.transfers[*occupant].origin.isCloud())
                                  : backend_.clearLocal(slot);
         if (!ok) {
             return {false, occupant ? occupant : before, occupant.has_value()};

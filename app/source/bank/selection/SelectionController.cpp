@@ -224,8 +224,14 @@ SelectionController::Placement SelectionController::placeEntry(const RegionEntry
     if (!slots_.available(destination, slot) || slots_.occupied(destination, slot)) {
         return Placement::Occupied;
     }
-    if (checkFormat && destination.isInSave() && !session_.saveAdapter.canImportPokemon(entry.payload)) {
-        return Placement::WrongFormat;
+    if (checkFormat && destination.isInSave()) {
+        const PokemonTransfer::ImportCheck check = session_.saveAdapter.checkImport(entry.payload);
+        if (!check.allowed()) {
+            return Placement::WrongFormat;
+        }
+        if (check.loss.any()) {
+            return Placement::DataLoss;
+        }
     }
     slots_.write(destination, slot, {entry.summary, entry.payload});
     state().region.recordPlacement({slots_.held(destination, slot, {entry.summary, entry.payload}), entry.originSlot});
@@ -258,7 +264,8 @@ void SelectionController::place() {
     Logger::instance().info("selection place: " + describeAddress(destination, session_) + ", placed "
                             + std::to_string(count(Placement::Placed)) + ", occupied "
                             + std::to_string(count(Placement::Occupied)) + ", wrong format "
-                            + std::to_string(count(Placement::WrongFormat)) + ", pending "
+                            + std::to_string(count(Placement::WrongFormat)) + ", data loss "
+                            + std::to_string(count(Placement::DataLoss)) + ", pending "
                             + std::to_string(count(Placement::Pending)) + ", stalled "
                             + std::to_string(count(Placement::Stalled)));
 
@@ -275,6 +282,7 @@ void SelectionController::place() {
         {Placement::Stalled, TextId::PlaceReasonUnavailable},
         {Placement::Occupied, TextId::PlaceReasonOccupied},
         {Placement::WrongFormat, TextId::PlaceReasonWrongFormat},
+        {Placement::DataLoss, TextId::PlaceReasonDataLoss},
     };
     std::string reason;
     for (const auto& [placement, text] : Reasons) {

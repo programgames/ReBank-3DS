@@ -6,6 +6,7 @@
 #include "platform/Clock.hpp"
 #include "platform/Logger.hpp"
 #include "save/catalog/GameCatalog.hpp"
+#include "save/pokemon/PokemonTransfer.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -21,7 +22,7 @@ bool incompatibleWithSave(const PokemonSummary& pokemon, std::uint8_t saveGenera
     const std::uint8_t format = pokemon.format != 0
         ? pokemon.format
         : (origin ? static_cast<std::uint8_t>(origin->format) : 0);
-    return saveGeneration != 0 && format != 0 && format > saveGeneration;
+    return saveGeneration != 0 && format != 0 && !PokemonTransfer::canConvert(format, saveGeneration);
 }
 }
 

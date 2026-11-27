@@ -62,72 +62,51 @@ SlotGroup<Count> readSlots(std::size_t count, const std::string& gameCode, std::
     return result;
 }
 
-std::unique_ptr<pksm::PKX> parsePayload(const PokemonPayload& payload, const std::string& location) {
-    const pksm::Generation generation = PokemonTransfer::generationFromFormat(payload.format);
-    if (generation == pksm::Generation::UNUSED) {
-        return nullptr;
+const char* refusalName(PokemonTransfer::ImportRefusal refusal) {
+    switch (refusal) {
+        case PokemonTransfer::ImportRefusal::None: return "none";
+        case PokemonTransfer::ImportRefusal::Generation: return "generation";
+        case PokemonTransfer::ImportRefusal::Egg: return "egg changing generation";
+        case PokemonTransfer::ImportRefusal::Corrupted: return "corrupted payload";
+        case PokemonTransfer::ImportRefusal::NotInGame: return "not in this game";
     }
-    std::vector<std::uint8_t> buffer = payload.data;
-    auto pkx = pksm::PKX::getPKM(generation, buffer.data(), buffer.size(), false);
-    if (!pkx || static_cast<std::uint16_t>(pkx->species()) == 0) {
-        Logger::instance().warning("write " + location + ": payload has no species");
-        return nullptr;
-    }
-    return pkx;
+    return "unknown";
 }
 
-std::unique_ptr<pksm::PKX> convertIfNeeded(std::unique_ptr<pksm::PKX> pkx, std::uint8_t format, std::uint8_t saveGen,
-                                           pksm::Sav& save, const std::string& location) {
-    if (format == saveGen) {
-        return pkx;
-    }
-    std::unique_ptr<pksm::PKX> converted = PokemonTransfer::convertForSave(*pkx, format, saveGen, save);
-    if (!converted) {
-        Logger::instance().warning("write " + location + ": conversion from Gen " + std::to_string(format) + " to Gen "
-                                   + std::to_string(saveGen) + " failed");
-    }
-    return converted;
-}
-
-void keepStoredChecksum(pksm::PKX& pkx, const std::string& location) {
-    const std::uint16_t storedChecksum = pkx.checksum();
-    pkx.refreshChecksum();
-    if (storedChecksum != pkx.checksum()) {
-        Logger::instance().warning("write " + location + ": checksum mismatch before write, keeping stored 0x"
-                                   + std::to_string(storedChecksum));
-        pkx.checksum(storedChecksum);
-    }
-}
-
-bool verifyWritten(const pksm::PKX* written, const pksm::PKX& expected, bool wasEgg, const std::string& location) {
-    if (!written || written->generation() != expected.generation() || written->species() != expected.species()) {
+bool verifyWritten(const pksm::PKX* written, const pksm::PKX& expected, const std::string& location) {
+    if (!written || written->generation() != expected.generation() || written->species() != expected.species()
+        || !PokemonTransfer::checksumValid(*written)) {
         Logger::instance().error("write " + location + ": readback failed");
         return false;
     }
-    if (written->egg() && !wasEgg) {
+    if (written->egg() && !expected.egg()) {
         Logger::instance().error("write " + location + ": write turned a non-egg into an egg, refusing");
         return false;
     }
     return true;
 }
 
+// With asTrade, writes the Pokemon as a trade would bring it: handler and egg met data first, Pokedex after.
 template <typename Store, typename Read>
-bool writeChecked(pksm::Sav& save, std::uint8_t saveGen, const std::string& location, const PokemonPayload& payload,
+bool writeChecked(pksm::Sav& save, const std::string& location, const PokemonPayload& payload, bool asTrade,
                   Store&& store, Read&& read) {
-    std::unique_ptr<pksm::PKX> original = parsePayload(payload, location);
-    if (!original) {
+    PokemonTransfer::PreparedPokemon prepared = PokemonTransfer::prepareForSave(payload, save);
+    if (!prepared.pokemon) {
+        Logger::instance().warning("write " + location + ": refused, " + refusalName(prepared.check.refusal)
+                                   + " (format " + std::to_string(payload.format) + ")");
         return false;
     }
-    const bool wasEgg = original->egg();
-    std::unique_ptr<pksm::PKX> pkx = convertIfNeeded(std::move(original), payload.format, saveGen, save, location);
-    if (!pkx) {
-        return false;
+    pksm::PKX& pkx = *prepared.pokemon;
+    if (asTrade) {
+        save.trade(pkx);
     }
-    keepStoredChecksum(*pkx, location);
-    store(*pkx);
+    store(pkx);
     const auto written = read();
-    if (!verifyWritten(written.get(), *pkx, wasEgg, location)) {
+    if (!verifyWritten(written.get(), pkx, location)) {
         return false;
+    }
+    if (asTrade && !written->egg()) { // Sav2::dex does not skip eggs itself
+        save.dex(*written);
     }
     Logger::instance().info("write " + location + ": species "
                             + std::to_string(static_cast<std::uint16_t>(written->species()))
@@ -175,8 +154,16 @@ std::size_t SaveAdapter::partyCount() const {
     return save_ ? std::min<std::size_t>(save_->partyCount(), PartySlotCount) : 0;
 }
 
-bool SaveAdapter::canImportPokemon(const PokemonPayload& payload) const {
-    return save_ && payload.known() && PokemonTransfer::canConvert(payload.format, gameGeneration());
+PokemonTransfer::ImportCheck SaveAdapter::checkImport(const PokemonPayload& payload) const {
+    if (!save_) {
+        return {PokemonTransfer::ImportRefusal::Corrupted, {}};
+    }
+    try {
+        return PokemonTransfer::prepareForSave(payload, *save_).check;
+    } catch (const std::exception& exception) {
+        Logger::instance().error("checkImport exception: " + std::string(exception.what()));
+        return {PokemonTransfer::ImportRefusal::Corrupted, {}};
+    }
 }
 
 template <typename Edit>
@@ -207,12 +194,12 @@ bool SaveAdapter::clearSlot(std::size_t box, std::size_t slot) {
     });
 }
 
-bool SaveAdapter::writePokemon(std::size_t box, std::size_t slot, const PokemonPayload& payload) {
+bool SaveAdapter::writePokemon(std::size_t box, std::size_t slot, const PokemonPayload& payload, bool asTrade) {
     const auto boxIndex = static_cast<std::uint8_t>(box);
     const auto slotIndex = static_cast<std::uint8_t>(slot);
     return validSlot(box, slot) && payload.known() && edit("writePokemon", [&] {
-        return writeChecked(*save_, gameGeneration(),
-            "box " + std::to_string(box + 1) + " slot " + std::to_string(slot + 1), payload,
+        return writeChecked(*save_,
+            "box " + std::to_string(box + 1) + " slot " + std::to_string(slot + 1), payload, asTrade,
             [&](const pksm::PKX& pkm) { save_->pkm(pkm, boxIndex, slotIndex, false); },
             [&] { return save_->pkm(boxIndex, slotIndex); });
     });
@@ -226,11 +213,11 @@ bool SaveAdapter::clearPartySlot(std::size_t slot) {
     });
 }
 
-bool SaveAdapter::writePartyPokemon(std::size_t slot, const PokemonPayload& payload) {
+bool SaveAdapter::writePartyPokemon(std::size_t slot, const PokemonPayload& payload, bool asTrade) {
     const auto slotIndex = static_cast<std::uint8_t>(slot);
     return validPartySlot(slot) && payload.known() && edit("writePartyPokemon", [&] {
         beginPartyEdit();
-        return writeChecked(*save_, gameGeneration(), "party slot " + std::to_string(slot + 1), payload,
+        return writeChecked(*save_, "party slot " + std::to_string(slot + 1), payload, asTrade,
             [&](const pksm::PKX& pkm) { save_->pkm(pkm, slotIndex); },
             [&] { return save_->pkm(slotIndex); });
     });
