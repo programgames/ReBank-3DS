@@ -120,9 +120,13 @@ constexpr Translation build() {
     text[at(TextId::IssueUploadNotStored)] = "The upload did not go through. It stayed in your save.";
     text[at(TextId::IssueCloudSlotDifferent)] = "The cloud slot holds a different Pokemon, so it stayed in your save.";
     text[at(TextId::IssueCloudSlotTrading)] = "This Pokemon is offered in a trade right now, so it stayed in the cloud.";
-    text[at(TextId::IssueCloudClaimFailed)] = "The cloud could not confirm this Pokemon, so nothing was moved.";
-    text[at(TextId::IssueUploadUndone)] = "The final save step failed, so its upload was undone. It stayed in your save.";
-    text[at(TextId::IssueUploadNotUndone)] = "The final save step failed and its cloud copy could not be removed. It is now in your save and in {0}.";
+    text[at(TextId::IssueCloudClaimFailed)] = "The cloud could not confirm this Pokemon, so it stayed in the cloud.";
+    text[at(TextId::IssueMovedInCloud)] = "It moved to this cloud slot, but the rest of its change was not applied.";
+    text[at(TextId::IssueRemovalUnconfirmed)] = "The cloud did not confirm the removal, so it may still be in the cloud. Check for a second copy.";
+    text[at(TextId::IssueSaveUnconfirmed)] = "The save could not be checked after a write error. It may be in your save, in the cloud or in both: check both.";
+    text[at(TextId::IssuePartyKept)] = "Your team needs a Pokemon that is not an Egg, so it stayed where it was.";
+    text[at(TextId::IssueUploadUndone)] = "Its change could not be saved, so its upload was undone. It stayed in your save.";
+    text[at(TextId::IssueUploadNotUndone)] = "Its change could not be saved and its cloud copy could not be removed. It is now in your save and in {0}.";
     text[at(TextId::IssueSwapCancelled)] = "Its swap partner could not be uploaded, so the swap was cancelled and it stayed in the cloud.";
     text[at(TextId::IssuePlacedElsewhere)] = "Its target slot stayed occupied, so it was placed here instead.";
     text[at(TextId::IssueReturnedToOrigin)] = "Its target slot stayed occupied, so it went back to where it was.";

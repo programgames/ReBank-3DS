@@ -34,7 +34,8 @@ PokemonSummary summarize(const pksm::PKX& pkm, const std::string& gameCode, std:
         {pkm.move(0), pkm.move(1), pkm.move(2), pkm.move(3)},
         pkm.ability(),
         pkm.nature(),
-        pkm.gender()
+        pkm.gender(),
+        pkm.egg()
     };
 }
 
@@ -160,6 +161,31 @@ bool SaveAdapter::slotOccupied(std::size_t box, std::size_t slot) const {
         Logger::instance().error("slotOccupied exception: " + std::string(exception.what()));
         return true;
     }
+}
+
+PokemonPayload SaveAdapter::readSlot(std::size_t box, std::size_t slot) const {
+    if (!validSlot(box, slot)) {
+        return {};
+    }
+    const BoxSlots single = readSlots<BoxSlotCount>(1, gameCode_, saveFormat(), "Box slot", [&](std::size_t) {
+        return save_->pkm(static_cast<std::uint8_t>(box), static_cast<std::uint8_t>(slot));
+    });
+    return single.payloads[0];
+}
+
+PokemonPayload SaveAdapter::readPartySlot(std::size_t slot) const {
+    // Past the party count a slot can hold stale data, until an edit of the party clears it.
+    if (!save_ || slot >= PartySlotCount || (slot >= partyCount() && !partyEdited_)) {
+        return {};
+    }
+    const PartySlots single = readSlots<PartySlotCount>(1, gameCode_, saveFormat(), "Party slot", [&](std::size_t) {
+        return save_->pkm(static_cast<std::uint8_t>(slot));
+    });
+    return single.payloads[0];
+}
+
+bool SaveAdapter::boxesAreLists() const {
+    return save_ && (save_->generation() == pksm::Generation::ONE || save_->generation() == pksm::Generation::TWO);
 }
 
 PartySlots SaveAdapter::readParty() const {

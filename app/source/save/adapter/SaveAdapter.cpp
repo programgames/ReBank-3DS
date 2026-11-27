@@ -22,6 +22,7 @@ void SaveAdapter::close() {
     gameCode_.clear();
     previousBuffer_.clear();
     dirty_ = false;
+    diskUnknown_ = false;
 }
 
 bool SaveAdapter::open(const GameDescriptor& game, std::string& error, SaveSource::Preference preference) {
@@ -135,44 +136,38 @@ void SaveAdapter::beginPartyEdit() {
     }
 }
 
-void SaveAdapter::normalizeParty(bool compact) {
+// The party is a list in every game: a write never leaves a gap in it.
+void SaveAdapter::normalizeParty() {
     if (!partyEdited_) {
         return;
     }
     std::vector<std::unique_ptr<pksm::PKX>> members;
-    std::size_t lastOccupied = 0;
     for (std::size_t slot = 0; slot < PartySlotCount; ++slot) {
         auto member = save_->pkm(static_cast<std::uint8_t>(slot));
         if (member && static_cast<std::uint16_t>(member->species()) != 0) {
-            lastOccupied = slot + 1;
             members.push_back(std::move(member));
         }
     }
-    if (compact) {
-        auto empty = save_->emptyPkm();
-        for (std::size_t slot = 0; slot < PartySlotCount; ++slot) {
-            if (slot < members.size()) {
-                save_->pkm(*members[slot], static_cast<std::uint8_t>(slot));
-            } else if (empty) {
-                save_->pkm(*empty, static_cast<std::uint8_t>(slot));
-            }
+    auto empty = save_->emptyPkm();
+    for (std::size_t slot = 0; slot < PartySlotCount; ++slot) {
+        if (slot < members.size()) {
+            save_->pkm(*members[slot], static_cast<std::uint8_t>(slot));
+        } else if (empty) {
+            save_->pkm(*empty, static_cast<std::uint8_t>(slot));
         }
-        save_->partyCount(static_cast<std::uint8_t>(members.size()));
-    } else {
-        save_->partyCount(static_cast<std::uint8_t>(lastOccupied));
     }
+    save_->partyCount(static_cast<std::uint8_t>(members.size()));
     dirty_ = true;
-    Logger::instance().info("normalizeParty: " + std::to_string(members.size()) + " member(s), "
-                            + (compact ? std::string("compacted") : "count synced to " + std::to_string(lastOccupied)));
+    Logger::instance().info("normalizeParty: " + std::to_string(members.size()) + " member(s), compacted");
 }
 
-bool SaveAdapter::writeSave(std::string& error, bool finalWrite) {
+bool SaveAdapter::writeSave(std::string& error) {
     if (!save_ || !source_) {
         error = "No save loaded.";
         return false;
     }
     try {
-        normalizeParty(finalWrite);
+        normalizeParty();
     } catch (const std::exception& exception) {
         error = "The team could not be arranged.";
         Logger::instance().error("normalizeParty exception: " + std::string(exception.what()));
@@ -196,24 +191,31 @@ bool SaveAdapter::writeSave(std::string& error, bool finalWrite) {
     const std::optional<SaveImage> disk = source_->reread();
     const bool diskMatches = disk && disk->size == image.size()
         && std::equal(image.begin(), image.end(), disk->data.get());
-    if (written && (diskMatches || !disk)) {
+    // The disk decides: a write that reports an error but left the new image on disk succeeded.
+    if (diskMatches || (written && !disk)) {
         if (!disk) {
             Logger::instance().warning("writeSave: written, but the save could not be read back to verify it");
+        } else if (!written) {
+            Logger::instance().warning("writeSave: the write reported an error, but the disk holds the new save");
         }
         previousBuffer_ = image;
         dirty_ = false;
-        if (finalWrite) {
-            partyEdited_ = false;
-        }
+        partyEdited_ = false;
+        diskUnknown_ = false;
         Logger::instance().info("Save written and verified for " + gameCode_);
         return true;
     }
     if (disk) {
         previousBuffer_.assign(disk->data.get(), disk->data.get() + disk->size);
     }
+    diskUnknown_ = !disk;
     error = written ? "The save on disk does not match what was written." : "Failed to write save.";
     Logger::instance().error("writeSave: " + error + (disk ? " (disk state re-read)" : " (disk state unknown)"));
     return false;
+}
+
+bool SaveAdapter::diskKnown() const {
+    return !diskUnknown_;
 }
 
 bool SaveAdapter::discardUnsavedChanges(std::string& error) {

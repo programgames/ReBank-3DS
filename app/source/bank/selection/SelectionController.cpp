@@ -151,6 +151,13 @@ void SelectionController::move(CursorDirection direction) {
 
 bool SelectionController::canGrab(StorageAddress address, const std::vector<std::size_t>& originSlots) {
     const std::string where = describeAddress(address, session_);
+    if (session_.hand.active) {
+        // A touch in Row or Area mode can pick a Pokemon up: the hand and a region must not
+        // both hold Pokemon, or dropping one overwrites a slot.
+        context_.status = context_.text.get(TextId::DropFirst);
+        Logger::instance().info("selection grab blocked: the hand holds a Pokemon");
+        return false;
+    }
     if (!slots_.loaded(address)) {
         context_.status = context_.text.get(TextId::BankBoxLoading);
         Logger::instance().warning("selection grab blocked: " + where + " is still loading");

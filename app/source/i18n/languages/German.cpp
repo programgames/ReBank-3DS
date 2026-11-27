@@ -120,9 +120,13 @@ constexpr Translation build() {
     text[at(TextId::IssueUploadNotStored)] = "Das Hochladen hat nicht geklappt. Es blieb in deinem Spielstand.";
     text[at(TextId::IssueCloudSlotDifferent)] = "Im Cloud-Platz liegt ein anderes Pokémon, daher blieb es in deinem Spielstand.";
     text[at(TextId::IssueCloudSlotTrading)] = "Dieses Pokémon wird gerade zum Tausch angeboten und blieb deshalb in der Cloud.";
-    text[at(TextId::IssueCloudClaimFailed)] = "Die Cloud konnte dieses Pokémon nicht bestätigen, daher wurde nichts verschoben.";
-    text[at(TextId::IssueUploadUndone)] = "Der letzte Speicherschritt schlug fehl, daher wurde das Hochladen rückgängig gemacht. Es blieb in deinem Spielstand.";
-    text[at(TextId::IssueUploadNotUndone)] = "Der letzte Speicherschritt schlug fehl und die Cloud-Kopie ließ sich nicht entfernen. Es liegt jetzt in deinem Spielstand und in {0}.";
+    text[at(TextId::IssueCloudClaimFailed)] = "Die Cloud konnte dieses Pokémon nicht bestätigen, daher blieb es in der Cloud.";
+    text[at(TextId::IssueMovedInCloud)] = "Es wurde auf diesen Cloud-Platz verschoben, der Rest der Änderung wurde aber nicht ausgeführt.";
+    text[at(TextId::IssueRemovalUnconfirmed)] = "Die Cloud hat das Entfernen nicht bestätigt, es liegt eventuell noch in der Cloud. Prüfe auf eine zweite Kopie.";
+    text[at(TextId::IssueSaveUnconfirmed)] = "Der Spielstand ließ sich nach einem Schreibfehler nicht prüfen. Es liegt eventuell im Spielstand, in der Cloud oder in beiden: prüfe beide.";
+    text[at(TextId::IssuePartyKept)] = "Dein Team braucht ein Pokémon, das kein Ei ist, daher blieb es, wo es war.";
+    text[at(TextId::IssueUploadUndone)] = "Die Änderung ließ sich nicht speichern, daher wurde das Hochladen rückgängig gemacht. Es blieb in deinem Spielstand.";
+    text[at(TextId::IssueUploadNotUndone)] = "Die Änderung ließ sich nicht speichern und die Cloud-Kopie ließ sich nicht entfernen. Es liegt jetzt in deinem Spielstand und in {0}.";
     text[at(TextId::IssueSwapCancelled)] = "Sein Tauschpartner konnte nicht hochgeladen werden, daher wurde der Tausch abgebrochen und es blieb in der Cloud.";
     text[at(TextId::IssuePlacedElsewhere)] = "Sein Zielplatz blieb belegt, daher wurde es stattdessen hier abgelegt.";
     text[at(TextId::IssueReturnedToOrigin)] = "Sein Zielplatz blieb belegt, daher kam es an seinen alten Platz zurück.";

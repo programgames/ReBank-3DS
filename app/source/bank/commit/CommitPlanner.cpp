@@ -184,13 +184,15 @@ public:
         while (true) {
             plan = CommitPlan{};
             buildTransfers(plan);
+            simulateCloud(plan);
             if (assignStaging(plan)) {
                 break;
             }
         }
         buildLayouts(plan);
-        simulateCloud(plan);
         reportHeldBack(plan);
+        plan.partyBaseline = snapshot_.partyBaseline;
+        plan.listBoxes = probe_.listBoxes;
         return plan;
     }
 
@@ -226,15 +228,12 @@ private:
         }
     }
 
-    bool stagingCandidate(const SlotRef& ref, const std::set<SlotRef>& taken) const {
-        if (changedSlots_.count(ref) || taken.count(ref)) {
-            return false;
-        }
+    bool occupiedAtBaseline(const SlotRef& ref) const {
         const auto baseline = snapshot_.localBaselines.find(ref.box);
         if (baseline != snapshot_.localBaselines.end()) {
-            return !baseline->second.summaries[ref.slot].occupied();
+            return baseline->second.summaries[ref.slot].occupied();
         }
-        return probe_.occupied && !probe_.occupied(ref.box, ref.slot);
+        return !probe_.occupied || probe_.occupied(ref.box, ref.slot);
     }
 
     std::optional<SlotRef> findStagingSlot(const PlannedTransfer& transfer, const std::set<SlotRef>& taken) const {
@@ -251,26 +250,41 @@ private:
             const std::size_t box = (startBox + offset) % probe_.boxCount;
             for (std::size_t slot = 0; slot < std::min(probe_.slotsPerBox, BoxSlotCount); ++slot) {
                 const SlotRef candidate = SlotRef::local(box, slot);
-                if (stagingCandidate(candidate, taken)) {
+                if (taken.count(candidate) || occupiedAtBaseline(candidate)) {
+                    continue;
+                }
+                if (!changedSlots_.count(candidate)) {
                     return candidate;
+                }
+                if (probe_.listBoxes) {
+                    // A list box packs on write: park only right after its last Pokemon,
+                    // so that the first save shifts nothing.
+                    break;
                 }
             }
         }
         return std::nullopt;
     }
 
+    // The first save writes only the downloads that an upload overwrites in the cloud, so
+    // that they are on disk before the upload. It never empties a slot. Such a download goes
+    // straight to its destination when that is a free box slot, else to a free parking slot.
     bool assignStaging(CommitPlan& plan) {
-        std::set<SlotRef> uploadOrigins;
+        std::set<std::size_t> overwritten;
         for (const PlannedTransfer& transfer : plan.transfers) {
-            if (transfer.kind == TransferKind::Upload) {
-                uploadOrigins.insert(transfer.origin);
+            if (transfer.kind == TransferKind::Upload && transfer.displaced) {
+                overwritten.insert(*transfer.displaced);
             }
         }
         std::set<SlotRef> taken;
         std::set<std::size_t> failedComponents;
         for (std::size_t index = 0; index < plan.transfers.size(); ++index) {
             PlannedTransfer& transfer = plan.transfers[index];
-            if (!transfer.landsLocally() || !uploadOrigins.count(transfer.destination)) {
+            if (transfer.kind != TransferKind::Download || !overwritten.count(index)) {
+                continue;
+            }
+            const SlotRef& destination = transfer.destination;
+            if (destination.kind == SlotKind::Local && !probe_.listBoxes && !occupiedAtBaseline(destination)) {
                 continue;
             }
             const std::optional<SlotRef> staging = findStagingSlot(transfer, taken);
@@ -291,24 +305,17 @@ private:
 
     void buildLayouts(CommitPlan& plan) {
         for (std::size_t index = 0; index < nodes_.size(); ++index) {
-            if (nodes_[index].ref.isCloud() || isFrozen(index)) {
-                continue;
+            if (!nodes_[index].ref.isCloud() && !isFrozen(index)) {
+                plan.baselineLayout[nodes_[index].ref] = std::nullopt;
             }
-            plan.baselineLayout[nodes_[index].ref] = std::nullopt;
-            plan.stagedLayout[nodes_[index].ref] = std::nullopt;
         }
         for (std::size_t index = 0; index < plan.transfers.size(); ++index) {
             const PlannedTransfer& transfer = plan.transfers[index];
             if (!transfer.origin.isCloud()) {
                 plan.baselineLayout[transfer.origin] = index;
             }
-            if (transfer.kind == TransferKind::Upload) {
-                plan.stagedLayout[transfer.origin] = index;
-            } else if (transfer.landsLocally() && transfer.staging) {
+            if (transfer.staging) {
                 plan.baselineLayout.emplace(*transfer.staging, std::nullopt);
-                plan.stagedLayout[*transfer.staging] = index;
-            } else if (transfer.landsLocally()) {
-                plan.stagedLayout[transfer.destination] = index;
             }
         }
     }
@@ -333,10 +340,10 @@ private:
             if (from == to) {
                 continue;
             }
-            plan.cloudMoves.push_back({from, to});
             const auto occupant = server.find(to);
             const std::optional<std::size_t> displaced = occupant != server.end()
                 ? std::optional<std::size_t>(occupant->second) : std::nullopt;
+            plan.cloudMoves.push_back({from, to, index, displaced});
             server[to] = index;
             position[index] = to;
             if (displaced) {
@@ -410,9 +417,13 @@ const char* describeReason(IssueReason reason) {
         case IssueReason::UploadNotStored: return "the upload did not go through; it stayed in the save";
         case IssueReason::CloudSlotDifferent: return "the cloud slot holds a different Pokemon; it stayed in the save";
         case IssueReason::CloudSlotTrading: return "the cloud Pokemon is offered in a trade; it stayed in the cloud";
-        case IssueReason::CloudClaimFailed: return "the cloud could not confirm the Pokemon; nothing was moved";
-        case IssueReason::UploadUndone: return "final save failed; upload undone, it stayed in the save";
-        case IssueReason::UploadNotUndone: return "final save failed and the cloud copy could not be removed; it exists twice";
+        case IssueReason::CloudClaimFailed: return "the cloud could not confirm the Pokemon; it stayed in the cloud";
+        case IssueReason::MovedInCloud: return "moved to another cloud slot; the rest of its change was not applied";
+        case IssueReason::RemovalUnconfirmed: return "the cloud did not confirm the removal; it may still be in the cloud";
+        case IssueReason::PartyKept: return "the party cannot be left empty; it stayed in the party, nothing changed";
+        case IssueReason::SaveUnconfirmed: return "the save could not be checked after a write error; it may be in the save, the cloud or both";
+        case IssueReason::UploadUndone: return "upload undone; it stayed in the save";
+        case IssueReason::UploadNotUndone: return "the upload could not be undone; it exists twice";
         case IssueReason::SwapCancelled: return "swap partner could not be uploaded; swap cancelled";
         case IssueReason::PlacedElsewhere: return "target slot stayed occupied; placed in a free slot instead";
         case IssueReason::ReturnedToOrigin: return "target slot stayed occupied; returned to its old slot";

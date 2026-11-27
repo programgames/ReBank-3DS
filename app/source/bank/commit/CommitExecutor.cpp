@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <map>
+#include <set>
 #include <utility>
 
 namespace {
@@ -42,6 +43,11 @@ void forEachBatch(const std::vector<Item>& items, Action action) {
                                  items.begin() + static_cast<std::ptrdiff_t>(end)));
     }
 }
+
+bool cloudCheckReason(IssueReason reason) {
+    return reason == IssueReason::CloudClaimFailed || reason == IssueReason::CloudSlotTrading
+        || reason == IssueReason::CloudSlotDifferent;
+}
 }
 
 template <typename Predicate>
@@ -61,7 +67,17 @@ CommitExecutor::CommitExecutor(const CommitPlan& plan, CommitBackend& backend, P
       progress_(std::move(progress)),
       current_(plan.baselineLayout),
       uploads_(plan.transfers.size(), UploadState::NotAttempted),
-      cancelledDownloads_(plan.transfers.size(), false) {}
+      cloudAt_(plan.transfers.size()),
+      overwrittenBy_(plan.transfers.size()),
+      cancelledDownloads_(plan.transfers.size(), false) {
+    for (std::size_t index = 0; index < plan.transfers.size(); ++index) {
+        const PlannedTransfer& transfer = plan.transfers[index];
+        cloudAt_[index] = transfer.origin;
+        if (transfer.kind == TransferKind::Upload && transfer.displaced) {
+            overwrittenBy_[*transfer.displaced] = index;
+        }
+    }
+}
 
 CommitResult CommitExecutor::run() {
     for (const HeldBackPokemon& held : plan_.heldBack) {
@@ -85,10 +101,12 @@ CommitResult CommitExecutor::run() {
         return result_;
     }
     if (!runCloudMoves()) {
+        reportCloudPositions();
         return result_;
     }
     claimCloudSources();
     if (!runFirstSave()) {
+        reportCloudPositions();
         return result_;
     }
     runUploads();
@@ -97,7 +115,12 @@ CommitResult CommitExecutor::run() {
     runCloudDeletes();
     countLocalChanges();
     progress_(CommitPhase::RemovingCloud, 100);
-    result_.success = true;
+    if (saveFailed_) {
+        result_.stop = CommitStop::SaveFailed;
+        result_.stopDetail = saveError_;
+    } else {
+        result_.success = true;
+    }
     return result_;
 }
 
@@ -105,26 +128,54 @@ bool CommitExecutor::active(std::size_t transfer) const {
     return droppedGroups_.count(plan_.transfers[transfer].group) == 0;
 }
 
-bool CommitExecutor::needsSecondSave() const {
-    return !transfersWhere([&](std::size_t index, const PlannedTransfer& transfer) {
-        return active(index) && (transfer.kind == TransferKind::Upload || transfer.staging);
-    }).empty();
+// A cloud Pokemon that the cloud moves left away from both its origin and its destination.
+bool CommitExecutor::movedInCloud(std::size_t transfer) const {
+    const PlannedTransfer& planned = plan_.transfers[transfer];
+    return planned.origin.isCloud() && cloudAt_[transfer] != planned.origin
+        && !(planned.kind == TransferKind::CloudMove && cloudAt_[transfer] == planned.destination);
+}
+
+const PokemonPayload& CommitExecutor::payloadOf(std::size_t transfer) const {
+    const auto received = received_.find(transfer);
+    return received != received_.end() ? received->second : plan_.transfers[transfer].payload;
+}
+
+// The party is a list, and so is a box of a Gen 1/2 save: a write packs it.
+bool CommitExecutor::isList(const SlotRef& slot) const {
+    return slot.kind == SlotKind::Party || (slot.kind == SlotKind::Local && plan_.listBoxes);
+}
+
+std::vector<SlotRef> CommitExecutor::listSlots(const SlotRef& slot) const {
+    std::vector<SlotRef> slots;
+    const std::size_t size = slot.kind == SlotKind::Party ? PartySlotCount : BoxSlotCount;
+    for (std::size_t index = 0; index < size; ++index) {
+        slots.push_back({slot.kind, slot.box, static_cast<std::uint8_t>(index)});
+    }
+    return slots;
 }
 
 bool CommitExecutor::runCloudMoves() {
     for (const CloudMoveStep& step : plan_.cloudMoves) {
         advance(CommitPhase::MovingCloud);
-        const RemoteResult moved = backend_.moveCloud(step.from, step.to);
+        RemoteResult moved = backend_.moveCloud(step.from, step.to);
+        if (moved.outcome == RemoteOutcome::Unknown && moveLanded(step)) {
+            backend_.log("commit: cloud move " + describeSlot(step.from) + " -> " + describeSlot(step.to)
+                         + " confirmed by listing");
+            moved.outcome = RemoteOutcome::Done;
+        }
         if (moved.outcome == RemoteOutcome::Done) {
             ++result_.moves;
+            cloudAt_[step.mover] = step.to;
+            if (step.displaced) {
+                cloudAt_[*step.displaced] = step.from;
+            }
             continue;
         }
         backend_.log("commit: cloud move " + describeSlot(step.from) + " -> " + describeSlot(step.to)
                      + " failed: " + moved.message);
-        for (std::size_t index = 0; index < plan_.transfers.size(); ++index) {
-            if (plan_.transfers[index].kind == TransferKind::CloudMove && plan_.transfers[index].destination == step.to) {
-                addIssue(index, step.from, IssueReason::CloudMoveFailed, moved.message);
-            }
+        addIssue(step.mover, step.from, IssueReason::CloudMoveFailed, moved.message);
+        if (step.displaced) {
+            addIssue(*step.displaced, step.to, IssueReason::CloudMoveFailed, moved.message);
         }
         result_.stop = CommitStop::CloudMoveFailed;
         result_.stopDetail = moved.message;
@@ -133,30 +184,89 @@ bool CommitExecutor::runCloudMoves() {
     return true;
 }
 
-CommitExecutor::LayoutOutcome CommitExecutor::applyLayout(const LocalLayout& target, bool finalWrite) {
+bool CommitExecutor::moveLanded(const CloudMoveStep& step) {
+    const auto listing = backend_.readCloudBox(step.to.box);
+    return listing && (*listing)[step.to.slot].payload.data == payloadOf(step.mover).data;
+}
+
+CommitExecutor::LayoutOutcome CommitExecutor::applyLayout(const LocalLayout& target) {
+    bool changed = false;
     for (const auto& [slot, occupant] : target) {
         const auto existing = current_.find(slot);
         const std::optional<std::size_t> before = existing == current_.end() ? std::nullopt : existing->second;
         if (before == occupant) {
             continue;
         }
-        const auto receivedPayload = occupant ? received_.find(*occupant) : received_.end();
-        const PokemonPayload* written = !occupant ? nullptr
-            : receivedPayload != received_.end() ? &receivedPayload->second : &plan_.transfers[*occupant].payload;
-        const bool ok = occupant ? backend_.writeLocal(slot, *written)
-                                 : backend_.clearLocal(slot);
+        changed = true;
+        const bool ok = occupant ? backend_.writeLocal(slot, payloadOf(*occupant)) : backend_.clearLocal(slot);
         if (!ok) {
+            backend_.discardLocal();
             return {false, occupant ? occupant : before, occupant.has_value()};
         }
     }
-    if (!backend_.persistLocal(saveError_, finalWrite)) {
+    if (!changed) {
+        return {true, std::nullopt, false};
+    }
+    if (!backend_.persistLocal(saveError_)) {
         backend_.log("commit: save write failed: " + saveError_);
-        return {false, std::nullopt, false};
+        if (!backend_.discardLocal()) {
+            backend_.log("commit: the disk state is unknown after the failed write");
+            saveUnknown_ = true;
+            return {false, std::nullopt, false};
+        }
+        // A change inside a list can look the same before and after: then it did not land.
+        if (!saveHolds(target) || saveHolds(current_)) {
+            return {false, std::nullopt, false};
+        }
+        backend_.log("commit: the save reached the disk anyway");
     }
     for (const auto& [slot, occupant] : target) {
         current_[slot] = occupant;
     }
     return {true, std::nullopt, false};
+}
+
+// Whether the save (as reloaded after a failed write) holds `target`. A list is compared as
+// the multiset of the commit's Pokemon in it, because the write packs it.
+bool CommitExecutor::saveHolds(const LocalLayout& target) {
+    using Data = std::vector<std::uint8_t>;
+    std::set<Data> tracked;
+    for (std::size_t index = 0; index < plan_.transfers.size(); ++index) {
+        tracked.insert(payloadOf(index).data);
+    }
+    std::map<SlotRef, std::multiset<Data>> lists;
+    for (const auto& [slot, occupant] : target) {
+        const Data expected = occupant ? payloadOf(*occupant).data : Data{};
+        if (isList(slot)) {
+            std::multiset<Data>& members = lists[listSlots(slot).front()];
+            if (occupant) {
+                members.insert(expected);
+            }
+        } else if (backend_.readLocal(slot).data != expected) {
+            return false;
+        }
+    }
+    for (const auto& [head, expected] : lists) {
+        std::multiset<Data> found;
+        for (const SlotRef& slot : listSlots(head)) {
+            Data data = backend_.readLocal(slot).data;
+            if (tracked.count(data)) {
+                found.insert(std::move(data));
+            }
+        }
+        if (found != expected) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool CommitExecutor::stillInSave(std::size_t upload) {
+    const SlotRef& origin = plan_.transfers[upload].origin;
+    const std::vector<SlotRef> slots = isList(origin) ? listSlots(origin) : std::vector<SlotRef>{origin};
+    return std::any_of(slots.begin(), slots.end(), [&](const SlotRef& slot) {
+        return backend_.readLocal(slot).data == payloadOf(upload).data;
+    });
 }
 
 void CommitExecutor::claimCloudSources() {
@@ -198,47 +308,79 @@ void CommitExecutor::claimBatch(const std::vector<std::size_t>& batch) {
     }
 }
 
-LocalLayout CommitExecutor::firstSaveTarget() const {
-    LocalLayout target = plan_.stagedLayout;
+// Cancels the rest of a group and reports each member where it really is. Uploads that
+// were attempted and downloads already in the save are reported later.
+void CommitExecutor::dropGroup(std::size_t trigger, IssueReason reason) {
+    const std::size_t group = plan_.transfers[trigger].group;
+    droppedGroups_.insert(group);
     for (std::size_t index = 0; index < plan_.transfers.size(); ++index) {
-        if (active(index)) {
+        const PlannedTransfer& transfer = plan_.transfers[index];
+        if (transfer.group != group) {
             continue;
         }
-        const PlannedTransfer& transfer = plan_.transfers[index];
-        for (const std::optional<SlotRef>& slot : {std::optional<SlotRef>(transfer.origin),
-                                                   std::optional<SlotRef>(transfer.destination), transfer.staging}) {
-            if (!slot || slot->isCloud()) {
-                continue;
+        if ((transfer.kind == TransferKind::Upload && uploads_[index] != UploadState::NotAttempted)
+            || (transfer.kind == TransferKind::Download && localSlotOf(index))) {
+            continue;
+        }
+        const bool moved = movedInCloud(index);
+        if (transfer.kind == TransferKind::CloudDelete && cloudCopyOf(index) != CloudCopy::Intact) {
+            // An upload overwrote it: it is gone as the user asked, or maybe gone.
+            if (cloudCopyOf(index) == CloudCopy::Unknown) {
+                addIssue(index, cloudAt_[index], IssueReason::RemovalUnconfirmed);
             }
-            const auto baseline = plan_.baselineLayout.find(*slot);
-            target[*slot] = baseline == plan_.baselineLayout.end() ? std::nullopt : baseline->second;
-        }
-    }
-    return target;
-}
-
-void CommitExecutor::dropGroup(std::size_t transfer, IssueReason reason) {
-    const std::size_t group = plan_.transfers[transfer].group;
-    droppedGroups_.insert(group);
-    addIssue(transfer, plan_.transfers[transfer].origin, reason);
-    for (std::size_t index = 0; index < plan_.transfers.size(); ++index) {
-        if (index != transfer && plan_.transfers[index].group == group) {
-            addIssue(index, plan_.transfers[index].origin, IssueReason::LinkedToHeldBack);
+        } else if (index == trigger && (cloudCheckReason(reason) || !moved)) {
+            addIssue(index, cloudAt_[index], reason);
+        } else if (moved) {
+            addIssue(index, cloudAt_[index], IssueReason::MovedInCloud);
+        } else if (!(transfer.kind == TransferKind::CloudMove && cloudAt_[index] == transfer.destination)) {
+            addIssue(index, transfer.origin, IssueReason::LinkedToHeldBack);
         }
     }
 }
 
+// The first save writes only the downloads that an upload overwrites in the cloud, at their
+// destination or parking slot. It empties no slot, so a packed list shifts nothing.
 bool CommitExecutor::runFirstSave() {
     advance(CommitPhase::SavingLocal);
+    // The parking slots of a list box follow its last Pokemon. When a group is dropped, the
+    // downloads left take the first of them, so that no gap makes the write shift them.
+    std::map<std::uint16_t, std::vector<SlotRef>> parking;
+    for (const PlannedTransfer& transfer : plan_.transfers) {
+        if (transfer.staging && plan_.listBoxes) {
+            parking[transfer.staging->box].push_back(*transfer.staging);
+        }
+    }
+    for (auto& [box, slots] : parking) {
+        std::sort(slots.begin(), slots.end());
+    }
     while (true) {
-        const LayoutOutcome outcome = applyLayout(firstSaveTarget(), !needsSecondSave());
+        LocalLayout target = current_;
+        std::map<std::uint16_t, std::size_t> taken;
+        for (std::size_t index = 0; index < plan_.transfers.size(); ++index) {
+            const PlannedTransfer& transfer = plan_.transfers[index];
+            if (transfer.kind != TransferKind::Download || !overwrittenBy_[index] || !active(index)) {
+                continue;
+            }
+            if (!transfer.staging) {
+                target[transfer.destination] = index;
+            } else if (plan_.listBoxes) {
+                target[parking[transfer.staging->box][taken[transfer.staging->box]++]] = index;
+            } else {
+                target[*transfer.staging] = index;
+            }
+        }
+        const LayoutOutcome outcome = applyLayout(target);
         if (outcome.ok) {
             return true;
         }
-        backend_.discardLocal();
         if (!outcome.failedTransfer) {
             result_.stop = CommitStop::SaveFailed;
             result_.stopDetail = saveError_;
+            for (const auto& [slot, occupant] : target) {
+                if (saveUnknown_ && occupant && current_[slot] != occupant) {
+                    addIssue(*occupant, cloudAt_[*occupant], IssueReason::SaveUnconfirmed);
+                }
+            }
             return false;
         }
         dropGroup(*outcome.failedTransfer, outcome.failedWrite ? IssueReason::WriteFailed : IssueReason::RemoveFailed);
@@ -257,6 +399,7 @@ void CommitExecutor::runUploads() {
 }
 
 void CommitExecutor::uploadBatch(std::vector<std::size_t> batch) {
+    bool retry = false;
     while (!batch.empty()) {
         std::vector<UploadItem> items;
         items.reserve(batch.size());
@@ -265,20 +408,24 @@ void CommitExecutor::uploadBatch(std::vector<std::size_t> batch) {
             items.push_back({transfer.destination, transfer.summary, transfer.payload, transfer.displaced.has_value()});
         }
         const UploadBatchResult sent = backend_.uploadBatch(items);
-        if (sent.outcome == RemoteOutcome::Done) {
+        if (sent.outcome == RemoteOutcome::Done && sent.stored == batch.size()) {
             for (const std::size_t index : batch) {
                 uploads_[index] = UploadState::Stored;
                 ++result_.uploads;
             }
             return;
         }
-        if (sent.outcome == RemoteOutcome::Unknown) {
-            backend_.log("commit: upload outcome unknown (" + sent.message + "), checking the cloud");
+        if (sent.outcome != RemoteOutcome::Refused) {
+            backend_.log("commit: upload outcome unknown (" + sent.message + ", stored "
+                         + std::to_string(sent.stored) + " of " + std::to_string(batch.size()) + "), checking the cloud");
             for (const std::size_t index : batch) {
                 uploads_[index] = UploadState::Unknown;
             }
             return;
         }
+        // A retry can be refused because the server stored part of an earlier attempt:
+        // the cloud listing decides.
+        const UploadState rejectedState = retry ? UploadState::Unknown : UploadState::Refused;
         std::vector<std::size_t> remaining;
         for (const std::size_t index : batch) {
             const PlannedTransfer& transfer = plan_.transfers[index];
@@ -288,17 +435,22 @@ void CommitExecutor::uploadBatch(std::vector<std::size_t> batch) {
                 remaining.push_back(index);
                 continue;
             }
-            uploads_[index] = UploadState::Refused;
-            addIssue(index, transfer.origin, IssueReason::CloudRefused, rejection->reason);
+            uploads_[index] = rejectedState;
+            if (!retry) {
+                addIssue(index, transfer.origin, IssueReason::CloudRefused, rejection->reason);
+            }
         }
         if (remaining.size() == batch.size()) {
             for (const std::size_t index : batch) {
-                uploads_[index] = UploadState::Refused;
-                addIssue(index, plan_.transfers[index].origin, IssueReason::CloudRefused, sent.message);
+                uploads_[index] = rejectedState;
+                if (!retry) {
+                    addIssue(index, plan_.transfers[index].origin, IssueReason::CloudRefused, sent.message);
+                }
             }
             return;
         }
         batch = std::move(remaining);
+        retry = true;
     }
 }
 
@@ -317,14 +469,20 @@ void CommitExecutor::reconcileUnknownUploads() {
                 addIssue(index, transfer.origin, IssueReason::UploadUnconfirmed, describeSlot(transfer.destination));
                 continue;
             }
-            const PokemonPayload& found = (*listing)[transfer.destination.slot];
-            const bool displacedStillThere = transfer.displaced
-                && found == plan_.transfers[*transfer.displaced].payload;
-            if (found == transfer.payload) {
+            const ListedSlot& found = (*listing)[transfer.destination.slot];
+            const bool displacedStillThere = transfer.displaced && found.occupied
+                && found.payload.data == plan_.transfers[*transfer.displaced].payload.data;
+            if (found.occupied && !found.payload.known()) {
+                addIssue(index, transfer.origin, IssueReason::UploadUnconfirmed, describeSlot(transfer.destination));
+            } else if (found.occupied && found.payload.data == transfer.payload.data) {
                 uploads_[index] = UploadState::Stored;
                 ++result_.uploads;
                 backend_.log("commit: upload to " + describeSlot(transfer.destination) + " confirmed by listing");
-            } else if (!found.known() || displacedStillThere) {
+            } else if (!found.occupied && transfer.displaced) {
+                // Neither Pokemon is in the slot: the one it replaced may be gone from the cloud,
+                // so the save keeps both (the upload state stays Unknown).
+                addIssue(index, transfer.origin, IssueReason::UploadNotStored);
+            } else if (!found.occupied || displacedStillThere) {
                 uploads_[index] = UploadState::Refused;
                 addIssue(index, transfer.origin, IssueReason::UploadNotStored);
             } else {
@@ -335,22 +493,18 @@ void CommitExecutor::reconcileUnknownUploads() {
 }
 
 CommitExecutor::CloudCopy CommitExecutor::cloudCopyOf(std::size_t transfer) const {
-    for (std::size_t index = 0; index < plan_.transfers.size(); ++index) {
-        const PlannedTransfer& upload = plan_.transfers[index];
-        if (upload.kind != TransferKind::Upload || upload.displaced != transfer) {
-            continue;
-        }
-        switch (uploads_[index]) {
-            case UploadState::Stored:
-            case UploadState::Undone:
-                return CloudCopy::Overwritten;
-            case UploadState::Unknown:
-                return CloudCopy::Unknown;
-            default:
-                return CloudCopy::Intact;
-        }
+    if (!overwrittenBy_[transfer]) {
+        return CloudCopy::Intact;
     }
-    return CloudCopy::Intact;
+    switch (uploads_[*overwrittenBy_[transfer]]) {
+        case UploadState::Stored:
+        case UploadState::Undone:
+            return CloudCopy::Overwritten;
+        case UploadState::Unknown:
+            return CloudCopy::Unknown;
+        default:
+            return CloudCopy::Intact;
+    }
 }
 
 std::optional<SlotRef> CommitExecutor::localSlotOf(std::size_t transfer) const {
@@ -362,95 +516,247 @@ std::optional<SlotRef> CommitExecutor::localSlotOf(std::size_t transfer) const {
     return std::nullopt;
 }
 
-void CommitExecutor::runFinalSave() {
-    if (!needsSecondSave()) {
-        return;
+// The local layout after the commit, given what the cloud accepted. An upload the cloud did
+// not store keeps its slot, so the Pokemon meant for that slot keeps its own slot too, or is
+// cancelled when it is a download whose cloud copy is intact. This repeats down the chain.
+LocalLayout CommitExecutor::settledLayout() {
+    const std::size_t count = plan_.transfers.size();
+    std::vector<bool> stays(count, false);
+    cancelledDownloads_.assign(count, false);
+    for (std::size_t index = 0; index < count; ++index) {
+        const PlannedTransfer& transfer = plan_.transfers[index];
+        if (!active(index)) {
+            const bool cancel = transfer.kind == TransferKind::Download && localSlotOf(index)
+                && cloudCopyOf(index) == CloudCopy::Intact;
+            (cancel ? cancelledDownloads_ : stays)[index] = true;
+        } else if (transfer.kind == TransferKind::Upload && uploads_[index] != UploadState::Stored) {
+            stays[index] = true;
+        }
+    }
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (std::size_t index = 0; index < count; ++index) {
+            const PlannedTransfer& transfer = plan_.transfers[index];
+            if (!active(index) || !transfer.landsLocally() || stays[index] || cancelledDownloads_[index]) {
+                continue;
+            }
+            const auto occupant = current_.find(transfer.destination);
+            if (occupant == current_.end() || !occupant->second || *occupant->second == index
+                || !stays[*occupant->second]) {
+                continue;
+            }
+            const bool cancel = transfer.kind == TransferKind::Download && cloudCopyOf(index) == CloudCopy::Intact;
+            (cancel ? cancelledDownloads_ : stays)[index] = true;
+            changed = true;
+        }
     }
     LocalLayout target = current_;
-    for (std::size_t index = 0; index < plan_.transfers.size(); ++index) {
-        const PlannedTransfer& transfer = plan_.transfers[index];
-        if (transfer.kind == TransferKind::Upload && uploads_[index] == UploadState::Stored) {
-            target[transfer.origin] = std::nullopt;
-        }
-    }
-    for (std::size_t index = 0; index < plan_.transfers.size(); ++index) {
-        const PlannedTransfer& transfer = plan_.transfers[index];
-        if (!transfer.staging || !active(index)) {
-            continue;
-        }
-        if (!target[transfer.destination]) {
-            target[transfer.destination] = index;
-            target[*transfer.staging] = std::nullopt;
-        } else if (transfer.kind == TransferKind::Download && cloudCopyOf(index) == CloudCopy::Intact) {
-            target[*transfer.staging] = std::nullopt;
-            cancelledDownloads_[index] = true;
-        } else if (transfer.kind == TransferKind::LocalMove) {
-            const auto origin = target.find(transfer.origin);
-            if (origin != target.end() && !origin->second) {
-                origin->second = index;
-                target[*transfer.staging] = std::nullopt;
+    for (std::size_t index = 0; index < count; ++index) {
+        if (!stays[index]) {
+            if (const std::optional<SlotRef> slot = localSlotOf(index)) {
+                target[*slot] = std::nullopt;
             }
         }
     }
-    advance(CommitPhase::Finalizing);
-    if (applyLayout(target, true).ok) {
-        return;
+    for (std::size_t index = 0; index < count; ++index) {
+        const PlannedTransfer& transfer = plan_.transfers[index];
+        if (active(index) && transfer.landsLocally() && !stays[index] && !cancelledDownloads_[index]) {
+            target[transfer.destination] = index;
+        }
     }
-    backend_.discardLocal();
-    std::fill(cancelledDownloads_.begin(), cancelledDownloads_.end(), false);
-    compensateStoredUploads();
+    return target;
 }
 
-void CommitExecutor::compensateStoredUploads() {
-    backend_.log("commit: final save failed (" + saveError_ + "), undoing confirmed uploads");
-    const std::vector<std::size_t> stored = transfersWhere([&](std::size_t index, const PlannedTransfer& transfer) {
-        return transfer.kind == TransferKind::Upload && uploads_[index] == UploadState::Stored;
-    });
-    forEachBatch(stored, [&](const std::vector<std::size_t>& batch) {
+bool CommitExecutor::partyHasNonEgg(const LocalLayout& target) const {
+    for (std::size_t slot = 0; slot < PartySlotCount; ++slot) {
+        const auto tracked = target.find(SlotRef::party(slot));
+        const bool hatched = tracked != target.end()
+            ? tracked->second && !plan_.transfers[*tracked->second].summary.egg
+            : plan_.partyBaseline.summaries[slot].occupied() && !plan_.partyBaseline.summaries[slot].egg;
+        if (hatched) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The final layout. When dropped groups would leave the party with no Pokemon that is not an
+// egg, the groups that take a Pokemon out of the party are dropped too.
+LocalLayout CommitExecutor::finalTarget() {
+    while (true) {
+        LocalLayout target = settledLayout();
+        if (partyHasNonEgg(target)) {
+            return target;
+        }
+        const std::vector<std::size_t> leaving = transfersWhere([&](std::size_t index, const PlannedTransfer& transfer) {
+            return active(index) && transfer.origin.kind == SlotKind::Party
+                && (transfer.kind != TransferKind::LocalMove || transfer.destination.kind != SlotKind::Party);
+        });
+        if (leaving.empty()) {
+            return target;
+        }
+        for (const std::size_t index : leaving) {
+            if (active(index)) {
+                dropGroup(index, IssueReason::PartyKept);
+            }
+        }
+    }
+}
+
+void CommitExecutor::runFinalSave() {
+    advance(CommitPhase::Finalizing);
+    while (true) {
+        const LayoutOutcome outcome = applyLayout(finalTarget());
+        if (outcome.ok) {
+            break;
+        }
+        if (!outcome.failedTransfer) {
+            backend_.log("commit: final save failed (" + saveError_ + ")");
+            saveFailed_ = true;
+            // A known disk is as before; an unknown one may have dropped a cancelled download
+            // from the save, so its cloud copy must stay.
+            if (!saveUnknown_) {
+                std::fill(cancelledDownloads_.begin(), cancelledDownloads_.end(), false);
+            }
+            break;
+        }
+        dropGroup(*outcome.failedTransfer, outcome.failedWrite ? IssueReason::WriteFailed : IssueReason::RemoveFailed);
+    }
+    // Undo the uploads whose Pokemon is still in the save: dropped ones (the final layout kept
+    // them), and all of them when the save failed, unless the failed write still cleared their
+    // slot. When the disk is unknown, an upload may be the only copy left: keep it.
+    for (std::size_t index = 0; index < plan_.transfers.size(); ++index) {
+        if (saveUnknown_ && active(index) && uploads_[index] == UploadState::Stored) {
+            addIssue(index, plan_.transfers[index].origin, IssueReason::SaveUnconfirmed);
+        }
+    }
+    undoUploads(transfersWhere([&](std::size_t index, const PlannedTransfer& transfer) {
+        return transfer.kind == TransferKind::Upload && uploads_[index] == UploadState::Stored
+            && (!active(index) || (saveFailed_ && !saveUnknown_ && stillInSave(index)));
+    }));
+}
+
+void CommitExecutor::undoUploads(const std::vector<std::size_t>& uploads) {
+    forEachBatch(uploads, [&](const std::vector<std::size_t>& batch) {
+        CloudTargets targets;
         std::vector<SlotRef> slots;
         for (const std::size_t index : batch) {
+            targets.emplace_back(index, plan_.transfers[index].destination);
             slots.push_back(plan_.transfers[index].destination);
         }
-        const bool removed = backend_.deleteCloud(slots).outcome == RemoteOutcome::Done;
-        for (const std::size_t index : batch) {
+        const std::vector<CloudRemoval> removals = removalsAfter(backend_.deleteCloud(slots), targets);
+        for (std::size_t offset = 0; offset < batch.size(); ++offset) {
+            const std::size_t index = batch[offset];
             const PlannedTransfer& transfer = plan_.transfers[index];
-            if (removed) {
-                uploads_[index] = UploadState::Undone;
-                --result_.uploads;
-                addIssue(index, transfer.origin, IssueReason::UploadUndone);
-            } else {
-                addIssue(index, transfer.origin, IssueReason::UploadNotUndone, describeSlot(transfer.destination));
+            switch (removals[offset]) {
+                case CloudRemoval::Gone:
+                    uploads_[index] = UploadState::Undone;
+                    --result_.uploads;
+                    addIssue(index, transfer.origin, IssueReason::UploadUndone);
+                    break;
+                case CloudRemoval::Present:
+                    addIssue(index, transfer.origin, IssueReason::UploadNotUndone, describeSlot(transfer.destination));
+                    break;
+                case CloudRemoval::Unknown:
+                    addIssue(index, transfer.origin, IssueReason::RemovalUnconfirmed, describeSlot(transfer.destination));
+                    break;
             }
         }
     });
+}
+
+// What a cloud delete did to each target. A delete that is not confirmed is checked against
+// the box listing.
+std::vector<CommitExecutor::CloudRemoval> CommitExecutor::removalsAfter(const RemoteResult& removed,
+                                                                       const CloudTargets& targets) {
+    if (removed.outcome == RemoteOutcome::Done) {
+        return std::vector<CloudRemoval>(targets.size(), CloudRemoval::Gone);
+    }
+    backend_.log("commit: cloud delete of " + std::to_string(targets.size()) + " slot(s) not confirmed ("
+                 + removed.message + "), checking the cloud");
+    std::map<std::uint16_t, std::optional<CloudListing>> listings;
+    std::vector<CloudRemoval> removals;
+    for (const auto& [index, slot] : targets) {
+        if (!listings.count(slot.box)) {
+            listings[slot.box] = backend_.readCloudBox(slot.box);
+        }
+        const std::optional<CloudListing>& listing = listings[slot.box];
+        const ListedSlot* found = listing ? &(*listing)[slot.slot] : nullptr;
+        if (!found || (found->occupied && !found->payload.known())) {
+            removals.push_back(CloudRemoval::Unknown);
+        } else {
+            const bool there = found->occupied && (found->payload.data == plan_.transfers[index].payload.data
+                                                   || found->payload.data == payloadOf(index).data);
+            removals.push_back(there ? CloudRemoval::Present : CloudRemoval::Gone);
+        }
+    }
+    return removals;
 }
 
 void CommitExecutor::reportLocalPlacements() {
     for (std::size_t index = 0; index < plan_.transfers.size(); ++index) {
         const PlannedTransfer& transfer = plan_.transfers[index];
-        if (!transfer.landsLocally() || !active(index)) {
+        const bool download = transfer.kind == TransferKind::Download;
+        const std::optional<SlotRef> placed = localSlotOf(index);
+        const bool reported = active(index) || (download && (placed || cancelledDownloads_[index]));
+        if (!reported || (!transfer.landsLocally() && transfer.kind != TransferKind::LocalDelete)) {
             continue;
         }
-        const std::optional<SlotRef> placed = localSlotOf(index);
+        const bool moved = movedInCloud(index);
+        // After a failed write the save is as before, or unknown: then each change is unconfirmed.
+        const auto notSaved = [&](IssueReason reason) { return saveUnknown_ ? IssueReason::SaveUnconfirmed : reason; };
         if (cancelledDownloads_[index]) {
-            addIssue(index, transfer.origin, IssueReason::SwapCancelled);
-        } else if (placed && transfer.staging && *placed == *transfer.staging) {
-            addIssue(index, *placed, IssueReason::PlacedElsewhere);
-        } else if (placed && *placed == transfer.origin) {
-            addIssue(index, *placed, IssueReason::ReturnedToOrigin);
+            addIssue(index, cloudAt_[index], saveUnknown_ ? IssueReason::SaveUnconfirmed
+                                             : moved   ? IssueReason::MovedInCloud
+                                                       : IssueReason::SwapCancelled);
+        } else if (transfer.kind == TransferKind::LocalDelete) {
+            if (placed) {
+                addIssue(index, *placed, notSaved(IssueReason::RemoveFailed));
+            }
+        } else if (placed == transfer.destination) {
+            continue;
+        } else if (placed && download) { // a download that is not at its destination is parked
+            addIssue(index, savedSlot(index, *placed), IssueReason::PlacedElsewhere);
+        } else if (placed) {
+            addIssue(index, savedSlot(index, *placed),
+                     saveFailed_ ? notSaved(IssueReason::WriteFailed) : IssueReason::ReturnedToOrigin);
+        } else if (saveUnknown_) {
+            addIssue(index, cloudAt_[index], IssueReason::SaveUnconfirmed);
+        } else {
+            addIssue(index, cloudAt_[index], moved ? IssueReason::MovedInCloud : IssueReason::WriteFailed);
+        }
+    }
+}
+
+// The slot a Pokemon has in the save: a write packs a list, so look it up there.
+SlotRef CommitExecutor::savedSlot(std::size_t transfer, const SlotRef& placed) {
+    if (!isList(placed)) {
+        return placed;
+    }
+    for (const SlotRef& slot : listSlots(placed)) {
+        if (backend_.readLocal(slot).data == payloadOf(transfer).data) {
+            return slot;
+        }
+    }
+    return placed;
+}
+
+// After a stop: the cloud moves already made stay, so each moved Pokemon is reported where it is.
+void CommitExecutor::reportCloudPositions() {
+    for (std::size_t index = 0; index < plan_.transfers.size(); ++index) {
+        if (active(index) && movedInCloud(index) && !reported_.count(index)) {
+            addIssue(index, cloudAt_[index], IssueReason::MovedInCloud);
         }
     }
 }
 
 void CommitExecutor::runCloudDeletes() {
-    std::vector<std::pair<std::size_t, SlotRef>> targets;
+    CloudTargets targets;
     for (std::size_t index = 0; index < plan_.transfers.size(); ++index) {
         const PlannedTransfer& transfer = plan_.transfers[index];
         const bool download = transfer.kind == TransferKind::Download;
-        if ((!download && transfer.kind != TransferKind::CloudDelete) || !active(index)) {
-            continue;
-        }
-        if (download && (cancelledDownloads_[index] || !localSlotOf(index))) {
+        if (download ? (cancelledDownloads_[index] || !localSlotOf(index))
+                     : (transfer.kind != TransferKind::CloudDelete || !active(index))) {
             continue;
         }
         switch (cloudCopyOf(index)) {
@@ -461,17 +767,18 @@ void CommitExecutor::runCloudDeletes() {
                 if (download) {
                     ++result_.downloads;
                 }
-                addIssue(index, *transfer.cloudSlotAfterMoves, IssueReason::OverwriteUnconfirmed);
+                addIssue(index, cloudAt_[index],
+                         download ? IssueReason::OverwriteUnconfirmed : IssueReason::RemovalUnconfirmed);
                 break;
             case CloudCopy::Intact:
-                targets.emplace_back(index, *transfer.cloudSlotAfterMoves);
+                targets.emplace_back(index, cloudAt_[index]);
                 break;
         }
     }
-    forEachBatch(targets, [&](const std::vector<std::pair<std::size_t, SlotRef>>& batch) { deleteFromCloud(batch); });
+    forEachBatch(targets, [&](const CloudTargets& batch) { deleteFromCloud(batch); });
 }
 
-void CommitExecutor::deleteFromCloud(const std::vector<std::pair<std::size_t, SlotRef>>& targets) {
+void CommitExecutor::deleteFromCloud(const CloudTargets& targets) {
     advance(CommitPhase::RemovingCloud);
     std::vector<SlotRef> slots;
     slots.reserve(targets.size());
@@ -479,16 +786,21 @@ void CommitExecutor::deleteFromCloud(const std::vector<std::pair<std::size_t, Sl
         slots.push_back(target.second);
     }
     const RemoteResult removed = backend_.deleteCloud(slots);
-    if (removed.outcome != RemoteOutcome::Done) {
-        backend_.log("commit: cloud delete of " + std::to_string(slots.size()) + " slot(s) failed: " + removed.message);
-    }
-    for (const auto& [index, slot] : targets) {
+    const std::vector<CloudRemoval> removals = removalsAfter(removed, targets);
+    for (std::size_t offset = 0; offset < targets.size(); ++offset) {
+        const auto& [index, slot] = targets[offset];
         const bool download = plan_.transfers[index].kind == TransferKind::Download;
-        if (removed.outcome == RemoteOutcome::Done) {
-            ++(download ? result_.downloads : result_.deletes);
-        } else {
-            addIssue(index, slot, download ? IssueReason::DownloadNotRemoved : IssueReason::CloudRemoveFailed,
-                     removed.message);
+        switch (removals[offset]) {
+            case CloudRemoval::Gone:
+                ++(download ? result_.downloads : result_.deletes);
+                break;
+            case CloudRemoval::Present:
+                addIssue(index, slot, download ? IssueReason::DownloadNotRemoved : IssueReason::CloudRemoveFailed,
+                         removed.message);
+                break;
+            case CloudRemoval::Unknown:
+                addIssue(index, slot, IssueReason::RemovalUnconfirmed, removed.message);
+                break;
         }
     }
 }
@@ -512,6 +824,7 @@ void CommitExecutor::addIssue(std::size_t transfer, const SlotRef& location, Iss
     backend_.log("commit issue: " + describeSlot(location) + " species " + std::to_string(summary.species)
                  + ": " + describeReason(reason) + (detail.empty() ? std::string{} : " (" + detail + ")"));
     result_.issues.push_back({describePokemon(summary), location, reason, std::move(detail)});
+    reported_.insert(transfer);
 }
 
 void CommitExecutor::advance(CommitPhase phase) {
