@@ -176,7 +176,9 @@ void AuthFormScreen::update(const InputFrame& input) {
     if (app_.navigator.authRunning()) {
         return;
     }
-    if (const int step = input.verticalStep(); step != 0) {
+    const CursorDirection direction = directions_.next(input);
+    if (direction == CursorDirection::Up || direction == CursorDirection::Down) {
+        const int step = direction == CursorDirection::Up ? -1 : 1;
         const auto count = static_cast<int>(itemCount());
         focus_ = static_cast<std::size_t>(((static_cast<int>(focus_) + step) % count + count) % count);
     }

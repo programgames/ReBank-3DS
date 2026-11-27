@@ -208,14 +208,8 @@ void PluginScreen::updateSelect(const InputFrame& input) {
     } else if (input.pressed(KEY_R) && page_ + 1 < pageCount()) {
         showPage(page_ + 1);
     }
-    if (input.pressed(KEY_DLEFT)) {
-        moveFocus(-1, 0);
-    } else if (input.pressed(KEY_DRIGHT)) {
-        moveFocus(1, 0);
-    } else if (input.pressed(KEY_DUP)) {
-        moveFocus(0, -1);
-    } else if (input.pressed(KEY_DDOWN)) {
-        moveFocus(0, 1);
+    if (const GridPoint step = stepOf(directions_.next(input)); step.row != 0 || step.column != 0) {
+        moveFocus(step.column, step.row);
     }
     if (input.pressed(KEY_A)) {
         toggle(focus_);

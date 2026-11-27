@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bank/selection/DirectionRepeat.hpp"
 #include "gui/Screen.hpp"
 #include "gui/icons/IconTexture.hpp"
 #include "save/SaveLoadService.hpp"
@@ -46,6 +47,7 @@ private:
     float carouselEase() const;
 
     std::size_t index_ = 0;
+    DirectionRepeat directions_;
     std::vector<GameProfile> games_;
     u64 selectionChangedAt_ = 0;
     int selectionDirection_ = 0;

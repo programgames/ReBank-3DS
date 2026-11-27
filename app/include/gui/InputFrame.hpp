@@ -23,10 +23,4 @@ struct InputFrame {
     bool pressed(u32 keys) const { return (down & keys) != 0; }
     bool touched() const { return pressed(KEY_TOUCH); }
     bool tapped(const UiRect& rect) const { return touched() && rect.contains(touch); }
-    int verticalStep() const {
-        if (pressed(KEY_UP) || circle.dy > StickThreshold) {
-            return -1;
-        }
-        return pressed(KEY_DOWN) || circle.dy < -StickThreshold ? 1 : 0;
-    }
 };

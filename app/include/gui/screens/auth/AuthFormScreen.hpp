@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bank/selection/DirectionRepeat.hpp"
 #include "gui/Screen.hpp"
 
 #include <cstddef>
@@ -56,5 +57,6 @@ private:
     std::optional<UiRect> consentBounds_;
     bool consentAccepted_ = false;
     std::size_t focus_ = 0;
+    DirectionRepeat directions_;
     u64 animationStartedAt_ = 0;
 };
