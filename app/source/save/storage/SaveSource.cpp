@@ -145,7 +145,10 @@ std::optional<SaveImage> SaveSource::reread() const {
             break;
         case Kind::DsCard: {
             Cartridge::DsCardRead card = Cartridge::readDsSave(gameCode_, infrared_, result);
-            image = {std::move(card.data), card.size};
+            // write() drives the chip found at load time: another chip is another card.
+            if (card.cardType == cardType_) {
+                image = {std::move(card.data), card.size};
+            }
             break;
         }
     }
