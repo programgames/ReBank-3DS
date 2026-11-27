@@ -4,6 +4,7 @@
 
 #include <citro2d.h>
 
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -19,7 +20,9 @@ public:
     float textWidth(std::string_view value, float size);
     float measure(std::string_view value, float size) const;
     float lineHeight(float size) const;
-    std::vector<std::string> wrap(std::string_view value, float size, float width) const;
+    std::vector<std::string> wrap(std::string_view value, float size, float width,
+                                  std::size_t maxLines = std::numeric_limits<std::size_t>::max()) const;
+    std::string fit(std::string_view value, float size, float width) const;
     void drawWarmBackground();
     void drawWarmTop(float eyeOffset);
     void drawSpinner(float centerX, float centerY, float radius, u32 color);
@@ -33,8 +36,6 @@ private:
     enum class Anchor { Left, Center, Right };
 
     C2D_Text parse(std::string_view value);
-    std::size_t fittingPrefix(std::string_view word, float size, float width) const;
-    void wrapParagraph(std::string_view paragraph, float size, float width, std::vector<std::string>& lines) const;
     void draw(std::string_view value, float x, float y, float size, u32 color, Anchor anchor);
 
     C2D_Font font_ = nullptr;

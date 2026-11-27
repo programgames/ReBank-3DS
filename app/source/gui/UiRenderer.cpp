@@ -1,5 +1,6 @@
 #include "gui/UiRenderer.hpp"
 
+#include "gui/TextLayout.hpp"
 #include "gui/widgets/Shapes.hpp"
 #include "platform/Clock.hpp"
 
@@ -102,60 +103,12 @@ float UiRenderer::measure(std::string_view value, float size) const {
     return width;
 }
 
-std::size_t UiRenderer::fittingPrefix(std::string_view word, float size, float width) const {
-    std::size_t length = word.size();
-    while (length > 1 && measure(word.substr(0, length), size) > width) {
-        --length;
-        while (length > 1 && (static_cast<unsigned char>(word[length]) & 0xC0) == 0x80) {
-            --length;
-        }
-    }
-    return length;
+std::vector<std::string> UiRenderer::wrap(std::string_view value, float size, float width, std::size_t maxLines) const {
+    return TextLayout::wrap(value, width, [this, size](std::string_view text) { return measure(text, size); }, maxLines);
 }
 
-void UiRenderer::wrapParagraph(std::string_view paragraph, float size, float width,
-                               std::vector<std::string>& lines) const {
-    std::string line;
-    while (!paragraph.empty()) {
-        const std::size_t space = paragraph.find(' ');
-        std::string_view word = paragraph.substr(0, space);
-        paragraph = space == std::string_view::npos ? std::string_view{} : paragraph.substr(space + 1);
-        if (word.empty()) {
-            continue;
-        }
-        const std::string candidate = line.empty() ? std::string(word) : line + " " + std::string(word);
-        if (measure(candidate, size) <= width) {
-            line = candidate;
-            continue;
-        }
-        if (!line.empty()) {
-            lines.push_back(std::move(line));
-        }
-        while (measure(word, size) > width) {
-            const std::size_t cut = fittingPrefix(word, size, width);
-            lines.emplace_back(word.substr(0, cut));
-            word = word.substr(cut);
-        }
-        line = std::string(word);
-    }
-    if (!line.empty()) {
-        lines.push_back(std::move(line));
-    }
-}
-
-std::vector<std::string> UiRenderer::wrap(std::string_view value, float size, float width) const {
-    std::vector<std::string> lines;
-    std::size_t start = 0;
-    while (start <= value.size()) {
-        const std::size_t newline = value.find('\n', start);
-        const std::size_t end = newline == std::string_view::npos ? value.size() : newline;
-        wrapParagraph(value.substr(start, end - start), size, width, lines);
-        if (newline == std::string_view::npos) {
-            break;
-        }
-        start = newline + 1;
-    }
-    return lines;
+std::string UiRenderer::fit(std::string_view value, float size, float width) const {
+    return TextLayout::fitWithEllipsis(value, width, [this, size](std::string_view text) { return measure(text, size); });
 }
 
 float UiRenderer::lineHeight(float size) const {

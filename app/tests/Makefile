@@ -9,14 +9,22 @@ SOURCES := CommitTests.cpp ../source/bank/commit/CommitPlanner.cpp ../source/ban
 HEADERS := $(wildcard *.hpp ../include/bank/*.hpp ../include/bank/commit/*.hpp ../include/save/pokemon/*.hpp)
 BINARY := build/commit_tests
 
+UI_SOURCES := UiTests.cpp ../source/gui/TextLayout.cpp
+UI_BINARY := build/ui_tests
+
 .PHONY: test clean
 
-test: $(BINARY)
+test: $(BINARY) $(UI_BINARY)
 	./$(BINARY) $(if $(SEED),--seed $(SEED))
+	./$(UI_BINARY)
 
 $(BINARY): $(SOURCES) $(HEADERS)
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $(SOURCES) -o $@
+
+$(UI_BINARY): $(UI_SOURCES) ../include/gui/TextLayout.hpp
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(UI_SOURCES) -o $@
 
 clean:
 	rm -rf build
