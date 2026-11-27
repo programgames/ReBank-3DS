@@ -142,6 +142,33 @@ Every release with all details is on the **[Releases](../../releases)** page.
 
 <br />
 
+## Building from source
+
+You need [devkitPro](https://devkitpro.org/wiki/Getting_Started) with devkitARM and the 3DS libraries. The CI builds in the `devkitpro/devkitarm` Docker image.
+
+Two build files are private and are not in the repository. Copy their examples first, from the `app` folder:
+
+```sh
+cp config/client-secret.mk.example config/client-secret.mk
+cp source/security/RequestSigning.cpp.example source/security/RequestSigning.cpp
+make
+```
+
+`make` builds `rebank.3dsx`. To build a CIA, run [makerom](https://github.com/3DSGuy/Project_CTR) as in [`.github/workflows/ci.yml`](.github/workflows/ci.yml). The example secret and the signing stub build a working app, but a server that checks request signatures rejects its requests. Put your own secret and signing code in the copied files to talk to your server.
+
+### Tests
+
+The commit pipeline (`app/source/bank/commit`) has tests that run on your PC. They need only `g++` or `clang++`, no devkitARM:
+
+```sh
+make -C app/tests test
+make -C app/tests test SEED=1234   # other seed for the randomized drafts
+```
+
+On Windows, run them from the devkitPro MSYS2 shell. The `EXPECTED_FAILURE` tests and the entries of `KnownFailures` are known bugs from issue #1: they must fail, and the run stays green while they do. When a fix makes one pass, the run fails until the marker is removed.
+
+<br />
+
 ## A project made with care
 
 ReBank is built and maintained independently, by someone who did not want years of collecting to disappear with a closing service. It keeps growing, with new features and fixes in nearly every update.
