@@ -2,7 +2,6 @@
 
 #include "platform/Logger.hpp"
 
-#include <algorithm>
 #include <string>
 #include <utility>
 #include <vector>
@@ -44,7 +43,10 @@ void LogsScreen::render() {
     if (entries.empty()) {
         return;
     }
-    scroll_ = std::min(scroll_, entries.size() - 1);
+    if (entries.size() < scroll_ + VisibleLines) {
+        // Past the oldest entry: show the oldest full screen instead of a mostly blank one.
+        scroll_ = entries.size() > VisibleLines ? entries.size() - VisibleLines : 0;
+    }
     // Fill the screen bottom-up from the newest shown entry, so only the visible entries get wrapped.
     std::vector<std::pair<std::string, u32>> lines;
     for (std::size_t index = entries.size() - scroll_; index > 0 && lines.size() < VisibleLines; --index) {

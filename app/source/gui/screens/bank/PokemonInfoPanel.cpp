@@ -21,6 +21,7 @@ constexpr float ValueRight = 400.0F - 8.0F;
 constexpr float LabelLeft = Left + 16.0F;
 constexpr float LabelGap = 6.0F;
 constexpr float LabelShare = 0.6F;
+constexpr float RowTextWidth = ValueRight - LabelLeft - LabelGap; // ~137 px column minus margins
 constexpr float GenderScale = 0.8F;
 constexpr float TypeBannerHeight = 12.0F;
 constexpr float TypeBannerGap = 4.0F;
@@ -110,10 +111,9 @@ void PokemonInfoPanel::drawRow(Row& row, std::string_view label, std::string_vie
         C2D_DrawImageAt(dot, Left + 6.0F, row.y + RowHeight * 0.5F - static_cast<float>(dot.subtex->height) * 0.5F,
                         0.13F);
     }
-    // The column is ~137 px wide: the label keeps at most 60% of it, the value gets the rest.
-    const float available = ValueRight - LabelLeft - LabelGap;
-    const std::string shownLabel = ui_.fit(label, fontSize, available * LabelShare);
-    const float valueWidth = available - ui_.measure(shownLabel, fontSize);
+    // The label keeps at most 60% of the row, the value gets the rest.
+    const std::string shownLabel = ui_.fit(label, fontSize, RowTextWidth * LabelShare);
+    const float valueWidth = RowTextWidth - ui_.measure(shownLabel, fontSize);
     ui_.drawText(shownLabel, LabelLeft, row.y + 2.0F, fontSize, HeaderInk);
     ui_.drawRight(ui_.fit(value.empty() ? Placeholder : value, fontSize, valueWidth), ValueRight, row.y + 2.0F,
                   fontSize, HeaderInk);
@@ -124,7 +124,8 @@ void PokemonInfoPanel::drawRow(Row& row, std::string_view label, std::string_vie
 void PokemonInfoPanel::drawTypeRow(Row& row, const PokemonSummary& focused) {
     const C2D_SpriteSheet sheet = resources_.typeBanners;
     drawStripe(row);
-    ui_.drawText(text_.get(TextId::InfoType), LabelLeft, row.y + 2.0F, 0.40F, HeaderInk);
+    ui_.drawText(ui_.fit(text_.get(TextId::InfoType), 0.40F, RowTextWidth * LabelShare), LabelLeft, row.y + 2.0F,
+                 0.40F, HeaderInk);
 
     const float nativeHeight = typeBannerHeight(sheet, focused.type1);
     const float scale = nativeHeight > 0.0F ? TypeBannerHeight / nativeHeight : 1.0F;

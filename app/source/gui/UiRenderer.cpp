@@ -14,39 +14,13 @@ using namespace Gui;
 namespace {
 constexpr float TextDepth = 0.85F;
 
-std::size_t validUtf8Length(std::string_view value, std::size_t index) {
-    const auto lead = static_cast<unsigned char>(value[index]);
-    std::size_t length = 0;
-    if ((lead & 0x80) == 0x00) {
-        return 1;
-    }
-    if ((lead & 0xE0) == 0xC0) {
-        length = 2;
-    } else if ((lead & 0xF0) == 0xE0) {
-        length = 3;
-    } else if ((lead & 0xF8) == 0xF0) {
-        length = 4;
-    } else {
-        return 0;
-    }
-    if (index + length > value.size()) {
-        return 0;
-    }
-    for (std::size_t offset = 1; offset < length; ++offset) {
-        if ((static_cast<unsigned char>(value[index + offset]) & 0xC0) != 0x80) {
-            return 0;
-        }
-    }
-    return length;
-}
-
 std::string sanitizeUtf8(std::string_view value) {
     std::string sanitized;
     sanitized.reserve(value.size());
     std::size_t index = 0;
     while (index < value.size()) {
-        const std::size_t length = validUtf8Length(value, index);
-        if (length == 0) {
+        const std::size_t length = TextLayout::codePointLength(value, index);
+        if (length == 1 && static_cast<unsigned char>(value[index]) >= 0x80) {
             sanitized.push_back('?');
             ++index;
             continue;
@@ -73,6 +47,11 @@ bool hangul(u32 codePoint) {
         || (codePoint >= 0x3130 && codePoint <= 0x318F);
 }
 
+// Fallback fonts, in the slot order of UiRenderer::fallbacks_.
+constexpr std::array<CFG_Region, 3> FallbackRegions{CFG_REGION_KOR, CFG_REGION_CHN, CFG_REGION_TWN};
+constexpr std::array<std::size_t, 3> HangulFontOrder{0, 1, 2}; // KOR first
+constexpr std::array<std::size_t, 3> HanziFontOrder{1, 2, 0};  // CHN, then TWN
+
 // Only these ranges can come from the KOR/CHN/TWN fonts; any other missing glyph must not load them.
 bool cjk(u32 codePoint) {
     return hangul(codePoint) || (codePoint >= 0x2E80 && codePoint <= 0x9FFF) || (codePoint >= 0xF900 && codePoint <= 0xFAFF)
@@ -85,6 +64,7 @@ bool hasGlyph(C2D_Font font, u32 codePoint) {
 }
 }
 
+// App declares ui_ after resources_, so this runs before ~GfxResources calls C2D_Fini.
 UiRenderer::~UiRenderer() {
     for (C2D_Font font : fallbacks_) {
         if (font) {
@@ -113,9 +93,7 @@ C2D_Font UiRenderer::fontFor(u32 codePoint) const {
     }
     // Korean, Chinese and Taiwanese consoles ship glyphs the USA/EUR/JPN font lacks: OT names and
     // nicknames from those games. The fonts load on the first glyph that needs them.
-    const std::array<std::size_t, FallbackCount> order =
-        hangul(codePoint) ? std::array<std::size_t, FallbackCount>{0, 1, 2} : std::array<std::size_t, FallbackCount>{1, 2, 0};
-    for (const std::size_t index : order) {
+    for (const std::size_t index : hangul(codePoint) ? HangulFontOrder : HanziFontOrder) {
         if (const C2D_Font font = fallback(index); font && hasGlyph(font, codePoint)) {
             return font;
         }
@@ -146,6 +124,10 @@ C2D_Text UiRenderer::parse(std::string_view value, C2D_Font font) {
     return text;
 }
 
+float UiRenderer::shiftFor(Anchor anchor, float width) {
+    return anchor == Anchor::Center ? width * 0.5F : (anchor == Anchor::Right ? width : 0.0F);
+}
+
 void UiRenderer::draw(std::string_view value, float x, float y, float size, u32 color, Anchor anchor) {
     const std::string sanitized = sanitizeUtf8(value);
     const std::vector<FontRun> runs = fontRuns(sanitized);
@@ -155,13 +137,12 @@ void UiRenderer::draw(std::string_view value, float x, float y, float size, u32 
         if (anchor != Anchor::Left) {
             C2D_TextGetDimensions(&text, size, size, &width, nullptr);
         }
-        const float shift = anchor == Anchor::Center ? width * 0.5F : (anchor == Anchor::Right ? width : 0.0F);
-        C2D_DrawText(&text, C2D_WithColor, std::round(x - shift), std::round(y), TextDepth, size, size, color);
+        C2D_DrawText(&text, C2D_WithColor, std::round(x - shiftFor(anchor, width)), std::round(y), TextDepth, size, size, color);
         return;
     }
     // ponytail: mixed-font text is laid out as one line; a line break only works in the single-font path.
     const float width = measure(sanitized, size);
-    float cursor = std::round(x - (anchor == Anchor::Center ? width * 0.5F : (anchor == Anchor::Right ? width : 0.0F)));
+    float cursor = std::round(x - shiftFor(anchor, width));
     for (const FontRun& run : runs) {
         C2D_Text text = parse(run.text, run.font);
         C2D_DrawText(&text, C2D_WithColor, std::round(cursor), std::round(y), TextDepth, size, size, color);

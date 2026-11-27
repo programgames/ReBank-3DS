@@ -40,14 +40,13 @@ public:
 
 private:
     enum class Anchor { Left, Center, Right };
+    static float shiftFor(Anchor anchor, float width);
 
     struct FontRun {
         C2D_Font font;
         std::string_view text;
     };
     static constexpr std::size_t FallbackCount = 3;
-    static constexpr std::array<CFG_Region, FallbackCount> FallbackRegions{CFG_REGION_KOR, CFG_REGION_CHN,
-                                                                           CFG_REGION_TWN};
 
     C2D_Text parse(std::string_view value, C2D_Font font);
     C2D_Font fallback(std::size_t index) const;

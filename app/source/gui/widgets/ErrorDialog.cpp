@@ -7,7 +7,7 @@
 
 namespace Gui {
 namespace {
-constexpr float MessageWidth = 302.0F - 12.0F - 36.0F;
+constexpr float MessageWidth = 302.0F - 12.0F - 36.0F; // dialog right edge, right margin, text left edge
 }
 
 void drawErrorDialog(UiRenderer& ui, const ErrorNotice& notice, std::string_view fallbackMessage,
