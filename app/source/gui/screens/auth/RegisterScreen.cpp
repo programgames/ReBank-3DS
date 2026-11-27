@@ -52,10 +52,13 @@ void RegisterScreen::openConsentDocument() {
     if (policyTask_.running() || reader_.isOpen()) {
         return;
     }
-    u8 language = CFG_LANGUAGE_EN;
-    const std::string code = R_SUCCEEDED(CFGU_GetSystemLanguage(&language)) && language == CFG_LANGUAGE_DE ? "de" : "en";
+    const std::string_view code = app_.text.languageCode();
     app_.status = text(TextId::PrivacyLoading);
-    if (!policyTask_.start([this, code]() { return app_.accountApi.privacyPolicy(code); })) {
+    // The server may have no policy in the console language: English is the fallback.
+    if (!policyTask_.start([this, code]() {
+            Policy policy = app_.accountApi.privacyPolicy(code);
+            return policy || code == "en" ? policy : app_.accountApi.privacyPolicy("en");
+        })) {
         app_.status.clear();
         app_.navigator.showError(TextId::PrivacyUnavailableTitle, TextId::PrivacyUnavailableMessage);
     }

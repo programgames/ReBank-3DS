@@ -37,7 +37,7 @@ App::App(std::string executablePath, bool homebrew)
     Logger::instance().info("Client boot");
     Logger::instance().info("Server " + ServerConfig::baseUrl());
     romfsInit();
-    i18n::init(pksm::Language::ENG);
+    i18n::init(localization_.dataLanguage());
     music_.start("romfs:/assets/music.ogg", "romfs:/assets/music_vc.ogg");
     resources_.load();
     ui_.setFont(resources_.textFont);

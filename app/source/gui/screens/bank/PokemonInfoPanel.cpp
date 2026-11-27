@@ -12,7 +12,6 @@
 using namespace Gui;
 
 namespace {
-constexpr auto Lang = pksm::Language::ENG;
 constexpr float Top = 8.0F;
 constexpr float RowHeight = 15.0F;
 constexpr float Left = BankLayout::CloudGrid.right();
@@ -41,11 +40,12 @@ TextId emptySlotText(StoragePane pane) {
 }
 
 void PokemonInfoPanel::render(const PokemonSummary& focused, StoragePane pane) {
+    const pksm::Language language = text_.dataLanguage();
     if (!focused.occupied()) {
         ui_.drawCentered(text_.get(emptySlotText(pane)), CenterX, Top + 16.0F, 0.4F, HeaderInk);
         return;
     }
-    const std::string speciesName = pksm::Species(focused.species).localize(Lang);
+    const std::string speciesName = pksm::Species(focused.species).localize(language);
     drawHeader(focused, speciesName);
 
     Row row{Top + 18.0F, 0};
@@ -54,19 +54,19 @@ void PokemonInfoPanel::render(const PokemonSummary& focused, StoragePane pane) {
     if (!focused.nickname.empty() && focused.nickname != speciesName) {
         drawRow(row, text_.get(TextId::InfoNickname), focused.nickname, 0.40F);
     }
-    drawRow(row, text_.get(TextId::InfoItem), focused.heldItem != 0 ? i18n::item(Lang, focused.heldItem) : "", 0.38F);
-    drawRow(row, text_.get(TextId::InfoAbility), i18n::ability(Lang, focused.ability), 0.38F);
-    drawRow(row, text_.get(TextId::InfoNature), i18n::nature(Lang, focused.nature), 0.38F);
+    drawRow(row, text_.get(TextId::InfoItem), focused.heldItem != 0 ? i18n::item(language, focused.heldItem) : "", 0.38F);
+    drawRow(row, text_.get(TextId::InfoAbility), i18n::ability(language, focused.ability), 0.38F);
+    drawRow(row, text_.get(TextId::InfoNature), i18n::nature(language, focused.nature), 0.38F);
     if (focused.language != pksm::Language::None) {
         drawRow(row, text_.get(TextId::InfoLanguage), i18n::langString(focused.language), 0.34F);
     }
     drawTypeRow(row, focused);
-    if (const std::string origin = i18n::game(Lang, focused.originGame); !origin.empty()) {
+    if (const std::string origin = i18n::game(language, focused.originGame); !origin.empty()) {
         drawRow(row, text_.get(TextId::InfoOrigin), origin, 0.40F);
     }
     row.y += 4.0F;
     for (const pksm::Move& move : focused.moves) {
-        drawRow(row, text_.get(TextId::InfoMove), move == pksm::Move::None ? "" : i18n::move(Lang, move), 0.38F);
+        drawRow(row, text_.get(TextId::InfoMove), move == pksm::Move::None ? "" : i18n::move(language, move), 0.38F);
         row.y += 1.0F;
     }
 }
