@@ -205,7 +205,7 @@ HttpResponse exchangeFailure(const Exchange& exchanged) {
     return failure(exchanged.failedStage, exchanged.failedMessage, exchanged.result, exchanged.sent);
 }
 
-HttpResponse readBody(Connection& connection, std::uint32_t status) {
+HttpResponse readBody(Connection& connection, std::uint32_t status, std::uint64_t timeoutNanoseconds) {
     const std::uint32_t retryAfter = status == 429 ? retryAfterSeconds(connection) : 0;
     u32 downloaded = 0;
     u32 contentSize = 0;
@@ -213,15 +213,16 @@ HttpResponse readBody(Connection& connection, std::uint32_t status) {
     if (contentSize > MaximumResponseSize) {
         return {false, status, {}, "The server response is too large.", true, retryAfter};
     }
+    // One byte more than the limit: a body that fills the buffer, or leaves data pending, is too large.
     std::vector<u8> body(MaximumResponseSize + 1);
-    const Result result = httpcReceiveData(connection.get(), body.data(), MaximumResponseSize);
+    const Result result = httpcReceiveDataTimeout(connection.get(), body.data(), body.size(), timeoutNanoseconds);
     httpcGetDownloadSizeState(connection.get(), &downloaded, &contentSize);
     connection.close();
-    if (R_FAILED(result) && static_cast<u32>(result) != HTTPC_RESULTCODE_DOWNLOADPENDING) {
-        return failure("download", "The server response could not be downloaded", result, true);
-    }
-    if (downloaded > MaximumResponseSize) {
+    if (static_cast<u32>(result) == HTTPC_RESULTCODE_DOWNLOADPENDING || downloaded > MaximumResponseSize) {
         return {false, status, {}, "The server response is too large.", true};
+    }
+    if (R_FAILED(result)) {
+        return failure("download", "The server response could not be downloaded", result, true);
     }
     Logger::instance().info("HTTP " + std::to_string(status));
     return {true, status, std::string(reinterpret_cast<char*>(body.data()), downloaded), {}, true, retryAfter};
@@ -273,6 +274,31 @@ bool HttpClient::consumeSessionRejected() {
 
 HttpResponse HttpClient::send(HttpMethod method, const std::string& path, const std::string& body,
                               const std::string& accessToken, std::uint64_t timeoutNanoseconds) {
+    const std::string token = session_.current(accessToken);
+    HttpResponse response = sendRetrying(method, path, body, token, timeoutNanoseconds);
+    // A signature still expired after the clock resync is a clock problem, not an expired token.
+    if (!response.success || response.status != 401 || signatureExpired(response) || token.empty() || !refresher_) {
+        return response;
+    }
+    // A data endpoint never signs the user out: only a refresh token the server refuses does.
+    const SessionTokens::RenewResult renewed = session_.renew(token, refresher_);
+    switch (renewed.outcome) {
+        case SessionTokens::Renewal::Renewed:
+            Logger::instance().info("Access token renewed, retrying " + path);
+            return sendRetrying(method, path, body, renewed.accessToken, timeoutNanoseconds);
+        case SessionTokens::Renewal::Rejected:
+            Logger::instance().warning("Refresh token rejected");
+            sessionRejected_ = true;
+            break;
+        case SessionTokens::Renewal::Failed:
+            Logger::instance().warning("Access token could not be renewed");
+            break;
+    }
+    return response;
+}
+
+HttpResponse HttpClient::sendRetrying(HttpMethod method, const std::string& path, const std::string& body,
+                                      const std::string& accessToken, std::uint64_t timeoutNanoseconds) {
     bool clockRetried = false;
     for (int attempt = 1;; ++attempt) {
         HttpResponse response = sendOnce(method, path, body, accessToken, timeoutNanoseconds);
@@ -316,11 +342,7 @@ HttpResponse HttpClient::sendOnce(HttpMethod method, const std::string& path, co
     if (exchanged.failedStage) {
         return exchangeFailure(exchanged);
     }
-    HttpResponse response = readBody(connection, exchanged.status);
-    if (response.success && response.status == 401 && !accessToken.empty()) {
-        sessionRejected_ = true;
-    }
-    return response;
+    return readBody(connection, exchanged.status, timeoutNanoseconds);
 }
 
 FileDownloadResult HttpClient::download(const std::string& path, const std::string& destination,
@@ -336,8 +358,8 @@ FileDownloadResult HttpClient::download(const std::string& path, const std::stri
         return {false, "Connection setup failed (" + resultCode(opened) + ").", 0};
     }
     Headers headers{{"Accept", "application/octet-stream"}};
-    if (!accessToken.empty()) {
-        headers.emplace_back("Authorization", "Bearer " + accessToken);
+    if (const std::string token = session_.current(accessToken); !token.empty()) {
+        headers.emplace_back("Authorization", "Bearer " + token);
     }
     const Exchange exchanged = exchange(connection, headers, {}, DefaultTimeoutNanoseconds);
     if (exchanged.failedStage || exchanged.status != 200) {

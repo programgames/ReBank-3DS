@@ -1,5 +1,5 @@
-# Host-side tests for the commit pipeline, the save storage rules and the cross-game rules. Needs only
-# g++ or clang++, no devkitARM.
+# Host-side tests for the commit pipeline, the save storage rules, the cross-game rules and the session
+# token renewal. Needs only g++ or clang++, no devkitARM.
 #   make test             build and run
 #   make test SEED=1234   rerun the randomized drafts with another seed
 
@@ -24,12 +24,16 @@ PKSM_OBJECTS := $(patsubst $(PKSM_CORE)/%,build/pksm/%.o,$(wildcard $(PKSM_CORE)
 COMPAT_SOURCES := CompatTests.cpp ../source/save/pokemon/PokemonTransfer.cpp
 COMPAT_BINARY := build/compat_tests
 
+SESSION_SOURCES := SessionTokensTests.cpp ../source/network/SessionTokens.cpp
+SESSION_BINARY := build/session_tokens_tests
+
 .PHONY: test clean
 
-test: $(BINARY) $(SAVE_BINARY) $(COMPAT_BINARY)
+test: $(BINARY) $(SAVE_BINARY) $(COMPAT_BINARY) $(SESSION_BINARY)
 	./$(BINARY) $(if $(SEED),--seed $(SEED))
 	./$(SAVE_BINARY)
 	./$(COMPAT_BINARY)
+	./$(SESSION_BINARY)
 
 $(BINARY): $(SOURCES) $(HEADERS)
 	@mkdir -p build
@@ -50,6 +54,10 @@ build/pksm/%.cpp.o: $(PKSM_CORE)/%.cpp pksm-host/PKSMCORE_CONFIG.h
 build/pksm/%.c.o: $(PKSM_CORE)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) -O1 -w -I$(PKSM_CORE)/memecrypto -c $< -o $@
+
+$(SESSION_BINARY): $(SESSION_SOURCES) ../include/network/SessionTokens.hpp ../include/network/ApiTypes.hpp
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -pthread $(INCLUDES) $(SESSION_SOURCES) -o $@
 
 clean:
 	rm -rf build

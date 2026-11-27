@@ -206,7 +206,7 @@ void BankScreen::renderTopHeader() {
 void BankScreen::renderCloudGrid(float eyeOffset) {
     drawGridCorners(CloudGrid);
     const StorageAddress address{StoragePane::Cloud, session_.trashBoxActive};
-    const std::uint8_t saveGeneration = session_.saveAdapter.gameGeneration();
+    const std::uint8_t saveGeneration = session_.saveGeneration;
     for (std::size_t slot = 0; slot < BoxSlotCount; ++slot) {
         const float cx = CloudGrid.centerX(slot);
         const float cy = CloudGrid.centerY(slot);

@@ -23,7 +23,7 @@ public:
         join();
         state_.store(State::Running, std::memory_order_release);
         auto* context = new Context{this, std::move(fn)};
-        thread_ = threadCreate(&AsyncJob::trampoline, context, stackSize_, Priority, Core, false);
+        thread_ = threadCreate(&AsyncJob::trampoline, context, stackSize_, priority(), Core, false);
         if (!thread_) {
             state_.store(State::Idle, std::memory_order_release);
             delete context;
@@ -71,7 +71,17 @@ private:
         }
     }
 
-    static constexpr int Priority = 0x30;
+    // One step below the main thread, which starts every job: the kernel does not time-slice threads of
+    // equal priority, so a CPU-heavy job at the main priority would freeze the UI.
+    static s32 priority() {
+        static const s32 value = [] {
+            s32 main = 0x30;
+            svcGetThreadPriority(&main, CUR_THREAD_HANDLE);
+            return main < 0x3F ? main + 1 : main;
+        }();
+        return value;
+    }
+
     static constexpr int Core = -2;
 
     std::size_t stackSize_;
