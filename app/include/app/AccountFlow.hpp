@@ -5,6 +5,7 @@
 #include "account/SessionStore.hpp"
 #include "app/AppContext.hpp"
 #include "bank/LoadService.hpp"
+#include "network/SessionTokens.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -22,7 +23,7 @@ struct AuthOutcome {
 
 class AccountFlow {
 public:
-    AccountFlow(AccountApi& api, AccountState& account, LoadService& loads);
+    AccountFlow(AccountApi& api, AccountState& account, LoadService& loads, SessionTokens& tokens);
 
     void initialize();
     std::optional<AuthRequest> storedSession();
@@ -30,6 +31,7 @@ public:
     bool running() const { return auth_.isRunning(); }
     AuthOutcome poll();
     void pollWelcomeBack();
+    void pollRenewedSession();
     void toggleAutoLogin();
     void forget();
     void signOut();
@@ -40,6 +42,7 @@ private:
 
     AccountState& account_;
     LoadService& loads_;
+    SessionTokens& tokens_;
     DeviceIdentity identity_;
     SessionStore sessionStore_{identity_};
     AuthController auth_;

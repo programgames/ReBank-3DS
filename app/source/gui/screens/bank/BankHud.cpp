@@ -98,11 +98,15 @@ void BankHud::drawStatusBar(SelectionMode mode, HandState hand, bool pending) {
 }
 
 void BankHud::drawCommitProgress(CommitPhase phase, int progress) {
-    C2D_DrawRectSolid(0.0F, 205.0F, 0.7F, 200.0F, 35.0F, C2D_Color32(0, 0, 0, 170));
-    ui_.drawCentered(std::string(text_.get(phaseLabel(phase))) + " " + std::to_string(progress) + "%", 100.0F, 210.0F,
+    C2D_DrawRectSolid(0.0F, 190.0F, 0.7F, 320.0F, 50.0F, C2D_Color32(0, 0, 0, 190));
+    ui_.drawCentered(std::string(text_.get(phaseLabel(phase))) + " " + std::to_string(progress) + "%", 160.0F, 192.0F,
                      0.42F, White);
-    C2D_DrawRectSolid(10.0F, 228.0F, 0.9F, 180.0F, 6.0F, C2D_Color32(50, 50, 50, 220));
-    C2D_DrawRectSolid(10.0F, 228.0F, 0.92F, 180.0F * static_cast<float>(progress) / 100.0F, 6.0F, CursorGreen);
+    C2D_DrawRectSolid(10.0F, 210.0F, 0.9F, 300.0F, 6.0F, C2D_Color32(50, 50, 50, 220));
+    C2D_DrawRectSolid(10.0F, 210.0F, 0.92F, 300.0F * static_cast<float>(progress) / 100.0F, 6.0F, CursorGreen);
+    const std::string_view warning = text_.get(TextId::CommitKeepPowerOn);
+    constexpr float WarningSize = 0.38F;
+    const float width = ui_.measure(warning, WarningSize);
+    ui_.drawCentered(warning, 160.0F, 221.0F, width > 300.0F ? WarningSize * 300.0F / width : WarningSize, White);
 }
 
 void BankHud::drawActionHints(bool holding, bool pending) {

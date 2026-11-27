@@ -10,8 +10,8 @@ constexpr double WelcomeBackSeconds = 1.1;
 constexpr int Unauthorized = 401;
 }
 
-AccountFlow::AccountFlow(AccountApi& api, AccountState& account, LoadService& loads)
-    : account_(account), loads_(loads), auth_(api) {}
+AccountFlow::AccountFlow(AccountApi& api, AccountState& account, LoadService& loads, SessionTokens& tokens)
+    : account_(account), loads_(loads), tokens_(tokens), auth_(api) {}
 
 void AccountFlow::initialize() {
     identity_.resolve();
@@ -60,6 +60,7 @@ AuthOutcome AccountFlow::signedIn(AuthController::Completed completed) {
         return {AuthOutcome::Kind::PasswordResetAccepted, completed.operation, completed.result.message};
     }
     account_.session = std::move(completed.result.session);
+    tokens_.set(account_.session);
     if (!completed.username.empty()) {
         account_.username = completed.username;
     }
@@ -87,6 +88,18 @@ void AccountFlow::pollWelcomeBack() {
     loads_.begin(LoadService::Operation::LoadBank);
 }
 
+void AccountFlow::pollRenewedSession() {
+    std::optional<AccountSession> renewed = tokens_.takeRenewed();
+    if (!renewed) {
+        return;
+    }
+    account_.session = std::move(*renewed);
+    if (account_.autoLogin) {
+        sessionStore_.save(account_.session.refreshToken, account_.username);
+    }
+    Logger::instance().info("Session renewed");
+}
+
 void AccountFlow::toggleAutoLogin() {
     account_.autoLogin = !account_.autoLogin;
     if (!account_.autoLogin) {
@@ -96,6 +109,7 @@ void AccountFlow::toggleAutoLogin() {
 
 void AccountFlow::forget() {
     sessionStore_.clear();
+    tokens_.clear();
     account_.session = {};
     account_.restoringSession = false;
     account_.welcomeBackPending = false;

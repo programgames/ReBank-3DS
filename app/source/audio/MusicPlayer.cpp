@@ -41,7 +41,11 @@ bool MusicPlayer::openVoice(Voice& voice, const char* path) {
         ndspChnWaveBufAdd(voice.channelId, &voice.waveBuffers[index]);
     }
     voice.running.store(true, std::memory_order_release);
-    voice.worker = threadCreate(&MusicPlayer::streamWorker, &voice, 32 * 1024, 0x2F, -2, false);
+    // The main priority, not above it: the main thread waits for VBlank every frame, which leaves the
+    // decoder enough time, and about 4 s of queued buffers cover a busy frame. Workers run lower.
+    s32 priority = 0x30;
+    svcGetThreadPriority(&priority, CUR_THREAD_HANDLE);
+    voice.worker = threadCreate(&MusicPlayer::streamWorker, &voice, 32 * 1024, priority, -2, false);
     return voice.worker != nullptr;
 }
 
@@ -101,6 +105,10 @@ void MusicPlayer::applyMix() {
     virtualConsoleMix[0] = virtualConsoleMix[1] = active_ ? 1.0F : 0.0F;
     ndspChnSetMix(normalVoice_.channelId, normalMix);
     ndspChnSetMix(virtualConsoleVoice_.channelId, virtualConsoleMix);
+    // A paused channel consumes no buffer, so its worker decodes nothing until the voice is active again.
+    // It resumes where it stopped: the two tracks are no longer in sync.
+    ndspChnSetPaused(normalVoice_.channelId, active_);
+    ndspChnSetPaused(virtualConsoleVoice_.channelId, !active_);
 }
 
 void MusicPlayer::stop() {

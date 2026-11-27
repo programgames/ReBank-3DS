@@ -269,5 +269,6 @@ enum class TextId : std::size_t {
     PolicyAccept,
     PolicyAgeConfirmation,
     PolicyDecline,
+    CommitKeepPowerOn,
     Count
 };

@@ -269,6 +269,7 @@ constexpr Translation build() {
     text[at(TextId::PolicyAccept)] = "Accept (A)";
     text[at(TextId::PolicyAgeConfirmation)] = "By accepting you also confirm that you are at least 16 years old or that your parents agree.";
     text[at(TextId::PolicyDecline)] = "Decline (B)";
+    text[at(TextId::CommitKeepPowerOn)] = "Do not turn off the console or remove the game card.";
     return text;
 }
 

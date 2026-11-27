@@ -20,7 +20,7 @@ bool SlotAccess::loaded(StorageAddress address) const {
 }
 
 bool SlotAccess::available(StorageAddress address, std::size_t slot) const {
-    return address.pane != StoragePane::Local || slot < session_.saveAdapter.boxCapacity();
+    return address.pane != StoragePane::Local || slot < session_.boxCapacity;
 }
 
 SlotState SlotAccess::read(StorageAddress address, std::size_t slot, SlotContents& contents) const {

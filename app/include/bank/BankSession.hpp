@@ -14,6 +14,10 @@
 
 struct BankState {
     SaveSummary saveSummary;
+    // Copied from the save when the game opens: the commit thread may replace the parsed save while
+    // the UI draws, so the UI never reads these through the SaveAdapter.
+    std::size_t boxCapacity = BoxSlotCount;
+    std::uint8_t saveGeneration = 0;
     std::size_t localBox = 0;
     std::size_t cloudBox = 0;
     std::size_t focusedSlot = 0;
@@ -66,7 +70,7 @@ public:
         trashTransitionStart = Clock::now();
     }
 
-    GridGeometry grid(StoragePane pane) const { return GridGeometry::forPane(pane, saveAdapter.boxCapacity()); }
+    GridGeometry grid(StoragePane pane) const { return GridGeometry::forPane(pane, boxCapacity); }
 
     StorageAddress focusedAddress() const {
         return {storagePane, storagePane == StoragePane::Cloud && trashBoxActive};

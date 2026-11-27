@@ -162,7 +162,6 @@ void GameSelectScreen::populateFromDiscovered(std::vector<DiscoveredGame>& disco
     selectionChangedAt_ = Clock::now();
     selectionDirection_ = 0;
     app_.status = games_.empty() ? std::string(text(TextId::StatusNoCompatibleSaveGame)) : std::string{};
-    app_.navigator.show(ScreenId::GameSelect);
     Logger::instance().info("Detected " + std::to_string(games_.size()) + " save games");
 }
 
