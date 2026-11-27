@@ -8,7 +8,6 @@
 #include <utils/i18n.hpp>
 
 #include <array>
-#include <cstring>
 #include <utility>
 
 using namespace Gui;
@@ -337,10 +336,13 @@ void App::renderBottom() {
 void App::requestText(std::string& destination, std::string_view hint, bool password, std::size_t maxLength) {
     SwkbdState keyboard;
     std::array<char, 257> buffer{};
-    std::strncpy(buffer.data(), destination.c_str(), buffer.size() - 1);
     swkbdInit(&keyboard, SWKBD_TYPE_NORMAL, 2, static_cast<int>(maxLength));
     const std::string ownedHint(hint);
     swkbdSetHintText(&keyboard, ownedHint.c_str());
+    if (!password) {
+        // libctru reads the starting text from here only, never from the output buffer.
+        swkbdSetInitialText(&keyboard, destination.c_str());
+    }
     swkbdSetValidation(&keyboard, SWKBD_NOTEMPTY_NOTBLANK, 0, 0);
     if (password) {
         swkbdSetFeatures(&keyboard, SWKBD_DEFAULT_QWERTY);
