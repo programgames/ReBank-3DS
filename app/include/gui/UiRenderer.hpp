@@ -4,6 +4,7 @@
 
 #include <citro2d.h>
 
+#include <array>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -11,6 +12,11 @@
 
 class UiRenderer {
 public:
+    UiRenderer() = default;
+    ~UiRenderer();
+    UiRenderer(const UiRenderer&) = delete;
+    UiRenderer& operator=(const UiRenderer&) = delete;
+
     void setFont(C2D_Font font) { font_ = font; }
     void setActiveBuffer(C2D_TextBuf buffer) { activeBuffer_ = buffer; }
 
@@ -35,9 +41,22 @@ public:
 private:
     enum class Anchor { Left, Center, Right };
 
-    C2D_Text parse(std::string_view value);
+    struct FontRun {
+        C2D_Font font;
+        std::string_view text;
+    };
+    static constexpr std::size_t FallbackCount = 3;
+    static constexpr std::array<CFG_Region, FallbackCount> FallbackRegions{CFG_REGION_KOR, CFG_REGION_CHN,
+                                                                           CFG_REGION_TWN};
+
+    C2D_Text parse(std::string_view value, C2D_Font font);
+    C2D_Font fallback(std::size_t index) const;
+    C2D_Font fontFor(u32 codePoint) const;
+    std::vector<FontRun> fontRuns(std::string_view value) const;
     void draw(std::string_view value, float x, float y, float size, u32 color, Anchor anchor);
 
     C2D_Font font_ = nullptr;
     C2D_TextBuf activeBuffer_ = nullptr;
+    mutable std::array<C2D_Font, FallbackCount> fallbacks_{};
+    mutable std::array<bool, FallbackCount> fallbackTried_{};
 };

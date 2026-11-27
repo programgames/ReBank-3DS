@@ -3,8 +3,10 @@
 #include "gui/TextLayout.hpp"
 #include "gui/widgets/Shapes.hpp"
 #include "platform/Clock.hpp"
+#include "platform/Logger.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 using namespace Gui;
@@ -56,22 +58,115 @@ std::string sanitizeUtf8(std::string_view value) {
 }
 }
 
-C2D_Text UiRenderer::parse(std::string_view value) {
+namespace {
+u32 decodeCodePoint(std::string_view value, std::size_t index, std::size_t length) {
+    const auto lead = static_cast<unsigned char>(value[index]);
+    u32 codePoint = length == 1 ? lead : lead & (0xFF >> (length + 1));
+    for (std::size_t extra = 1; extra < length; ++extra) {
+        codePoint = (codePoint << 6) | (static_cast<unsigned char>(value[index + extra]) & 0x3F);
+    }
+    return codePoint;
+}
+
+bool hangul(u32 codePoint) {
+    return (codePoint >= 0xAC00 && codePoint <= 0xD7A3) || (codePoint >= 0x1100 && codePoint <= 0x11FF)
+        || (codePoint >= 0x3130 && codePoint <= 0x318F);
+}
+
+// Only these ranges can come from the KOR/CHN/TWN fonts; any other missing glyph must not load them.
+bool cjk(u32 codePoint) {
+    return hangul(codePoint) || (codePoint >= 0x2E80 && codePoint <= 0x9FFF) || (codePoint >= 0xF900 && codePoint <= 0xFAFF)
+        || (codePoint >= 0xFF00 && codePoint <= 0xFFEF);
+}
+
+bool hasGlyph(C2D_Font font, u32 codePoint) {
+    const FINF_s* info = C2D_FontGetInfo(font);
+    return !info || C2D_FontGlyphIndexFromCodePoint(font, codePoint) != info->alterCharIndex;
+}
+}
+
+UiRenderer::~UiRenderer() {
+    for (C2D_Font font : fallbacks_) {
+        if (font) {
+            C2D_FontFree(font);
+        }
+    }
+}
+
+C2D_Font UiRenderer::fallback(std::size_t index) const {
+    if (!fallbackTried_[index]) {
+        fallbackTried_[index] = true;
+        fallbacks_[index] = C2D_FontLoadSystem(FallbackRegions[index]);
+        if (fallbacks_[index]) {
+            C2D_FontSetFilter(fallbacks_[index], GPU_NEAREST, GPU_LINEAR);
+        } else {
+            Logger::instance().warning("Fallback system font " + std::to_string(static_cast<int>(FallbackRegions[index]))
+                                       + " could not be loaded");
+        }
+    }
+    return fallbacks_[index];
+}
+
+C2D_Font UiRenderer::fontFor(u32 codePoint) const {
+    if (!cjk(codePoint) || hasGlyph(font_, codePoint)) {
+        return font_;
+    }
+    // Korean, Chinese and Taiwanese consoles ship glyphs the USA/EUR/JPN font lacks: OT names and
+    // nicknames from those games. The fonts load on the first glyph that needs them.
+    const std::array<std::size_t, FallbackCount> order =
+        hangul(codePoint) ? std::array<std::size_t, FallbackCount>{0, 1, 2} : std::array<std::size_t, FallbackCount>{1, 2, 0};
+    for (const std::size_t index : order) {
+        if (const C2D_Font font = fallback(index); font && hasGlyph(font, codePoint)) {
+            return font;
+        }
+    }
+    return font_;
+}
+
+std::vector<UiRenderer::FontRun> UiRenderer::fontRuns(std::string_view value) const {
+    std::vector<FontRun> runs;
+    std::size_t index = 0;
+    while (index < value.size()) {
+        const std::size_t length = TextLayout::codePointLength(value, index);
+        const C2D_Font font = fontFor(decodeCodePoint(value, index, length));
+        if (runs.empty() || runs.back().font != font) {
+            runs.push_back({font, value.substr(index, length)});
+        } else {
+            runs.back().text = value.substr(runs.back().text.data() - value.data(), runs.back().text.size() + length);
+        }
+        index += length;
+    }
+    return runs;
+}
+
+C2D_Text UiRenderer::parse(std::string_view value, C2D_Font font) {
     C2D_DrawRectSolid(0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0);
     C2D_Text text;
-    const std::string sanitized = sanitizeUtf8(value);
-    C2D_TextFontParse(&text, font_, activeBuffer_, sanitized.c_str());
+    C2D_TextFontParse(&text, font, activeBuffer_, std::string(value).c_str());
     return text;
 }
 
 void UiRenderer::draw(std::string_view value, float x, float y, float size, u32 color, Anchor anchor) {
-    C2D_Text text = parse(value);
-    float width = 0.0F;
-    if (anchor != Anchor::Left) {
-        C2D_TextGetDimensions(&text, size, size, &width, nullptr);
+    const std::string sanitized = sanitizeUtf8(value);
+    const std::vector<FontRun> runs = fontRuns(sanitized);
+    if (runs.size() <= 1) {
+        C2D_Text text = parse(sanitized, runs.empty() ? font_ : runs.front().font);
+        float width = 0.0F;
+        if (anchor != Anchor::Left) {
+            C2D_TextGetDimensions(&text, size, size, &width, nullptr);
+        }
+        const float shift = anchor == Anchor::Center ? width * 0.5F : (anchor == Anchor::Right ? width : 0.0F);
+        C2D_DrawText(&text, C2D_WithColor, std::round(x - shift), std::round(y), TextDepth, size, size, color);
+        return;
     }
-    const float shift = anchor == Anchor::Center ? width * 0.5F : (anchor == Anchor::Right ? width : 0.0F);
-    C2D_DrawText(&text, C2D_WithColor, std::round(x - shift), std::round(y), TextDepth, size, size, color);
+    // ponytail: mixed-font text is laid out as one line; a line break only works in the single-font path.
+    const float width = measure(sanitized, size);
+    float cursor = std::round(x - (anchor == Anchor::Center ? width * 0.5F : (anchor == Anchor::Right ? width : 0.0F)));
+    for (const FontRun& run : runs) {
+        C2D_Text text = parse(run.text, run.font);
+        C2D_DrawText(&text, C2D_WithColor, std::round(cursor), std::round(y), TextDepth, size, size, color);
+        cursor += measure(run.text, size);
+    }
 }
 
 void UiRenderer::drawText(std::string_view value, float x, float y, float size, u32 color) {
@@ -90,14 +185,11 @@ float UiRenderer::measure(std::string_view value, float size) const {
     float width = 0.0F;
     std::size_t index = 0;
     while (index < value.size()) {
-        const auto lead = static_cast<unsigned char>(value[index]);
-        const std::size_t length = lead < 0x80 ? 1 : (lead >> 5) == 0x6 ? 2 : (lead >> 4) == 0xE ? 3 : (lead >> 3) == 0x1E ? 4 : 1;
-        u32 codePoint = length == 1 ? lead : lead & (0xFF >> (length + 1));
-        for (std::size_t extra = 1; extra < length && index + extra < value.size(); ++extra) {
-            codePoint = (codePoint << 6) | (static_cast<unsigned char>(value[index + extra]) & 0x3F);
-        }
+        const std::size_t length = TextLayout::codePointLength(value, index);
+        const u32 codePoint = decodeCodePoint(value, index, length);
         index += length;
-        const charWidthInfo_s* info = C2D_FontGetCharWidthInfo(font_, C2D_FontGlyphIndexFromCodePoint(font_, codePoint));
+        const C2D_Font font = fontFor(codePoint);
+        const charWidthInfo_s* info = C2D_FontGetCharWidthInfo(font, C2D_FontGlyphIndexFromCodePoint(font, codePoint));
         width += info ? info->charWidth * size : 0.0F;
     }
     return width;
@@ -117,10 +209,7 @@ float UiRenderer::lineHeight(float size) const {
 }
 
 float UiRenderer::textWidth(std::string_view value, float size) {
-    C2D_Text text = parse(value);
-    float width = 0.0F;
-    C2D_TextGetDimensions(&text, size, size, &width, nullptr);
-    return width;
+    return measure(sanitizeUtf8(value), size);
 }
 
 void UiRenderer::drawWarmBackground() {
