@@ -47,7 +47,8 @@ UploadResult CloudApi::upload(const std::vector<UploadPokemon>& pokemon, const s
                          "The upload was rejected.");
     if (reply.accepted()) {
         const bool stored = reply.body().flag("stored") && json_is_integer(reply.body().field("count"));
-        return stored ? UploadResult{RequestOutcome::Succeeded, "Upload complete.", {}}
+        return stored ? UploadResult{RequestOutcome::Succeeded, "Upload complete.", {},
+                                     reply.body().integer<std::size_t>("count", 0)}
                       : UploadResult{RequestOutcome::Unknown, "The server returned an incomplete upload response.", {}};
     }
     UploadResult result{reply.failure(), reply.error(), {}};

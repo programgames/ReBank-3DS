@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <utility>
 
@@ -11,10 +12,13 @@ public:
         subject_ = std::move(subject);
         location_ = std::move(location);
         visible_ = true;
+        ++shownCount_;
     }
     void dismiss() { visible_ = false; }
 
     bool visible() const { return visible_; }
+    // Changes on every show(), also when a new error replaces a visible one.
+    std::uint32_t shownCount() const { return shownCount_; }
     const std::string& title() const { return title_; }
     const std::string& message() const { return message_; }
     const std::string& subject() const { return subject_; }
@@ -22,6 +26,7 @@ public:
 
 private:
     bool visible_ = false;
+    std::uint32_t shownCount_ = 0;
     std::string title_;
     std::string message_;
     std::string subject_;

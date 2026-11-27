@@ -103,6 +103,12 @@ bool exportExists(std::string_view code) {
     return std::any_of(candidates.begin(), candidates.end(), FileSystem::exists);
 }
 
+bool existsAfterRecovery(const std::string& path) {
+    const FsGuard guard;
+    recoverInterruptedReplace(path);
+    return FileSystem::exists(path);
+}
+
 bool write(const std::string& path, const std::uint8_t* data, std::size_t size) {
     const FsGuard guard;
     AppPaths::ensureDirectory(ExportDirectory);

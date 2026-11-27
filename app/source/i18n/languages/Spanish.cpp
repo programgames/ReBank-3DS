@@ -62,6 +62,13 @@ constexpr Translation build() {
     text[at(TextId::SignInAgain)] = "Vuelve a iniciar sesión.";
     text[at(TextId::StillFetching)] = "Aún se está cargando {0}...";
     text[at(TextId::GenerationIncompatible)] = "La Gen. {0} no puede ir a la Gen. {1}.";
+    text[at(TextId::EggCannotChangeGeneration)] = "Un Huevo no puede cambiar de generación.";
+    text[at(TextId::PokemonCorrupted)] = "Los datos de {0} están dañados.";
+    text[at(TextId::PokemonNotInGame)] = "{0} no puede existir en este juego.";
+    text[at(TextId::LossHeldItem)] = "su objeto equipado";
+    text[at(TextId::LossMoves)] = "algunos movimientos";
+    text[at(TextId::LossHeldItemAndMoves)] = "su objeto equipado y algunos movimientos";
+    text[at(TextId::ConfirmDataLoss)] = "{0} perderá aquí {1}. Pulsa A otra vez para dejarlo.";
     text[at(TextId::BankBoxLoading)] = "Esta caja del banco aún se está cargando.";
     text[at(TextId::SlotUnavailable)] = "Las cajas de este juego solo tienen {0} espacios.";
     text[at(TextId::FetchingOccupant)] = "Cargando el Pokémon de este espacio...";
@@ -95,6 +102,7 @@ constexpr Translation build() {
     text[at(TextId::PlaceReasonUnavailable)] = "{0} no disponible(s) en el servidor";
     text[at(TextId::PlaceReasonOccupied)] = "{0} espacio(s) ocupado(s)";
     text[at(TextId::PlaceReasonWrongFormat)] = "{0} no compatible(s) con esta partida";
+    text[at(TextId::PlaceReasonDataLoss)] = "{0} perderían datos, déjalos de uno en uno";
     text[at(TextId::CommitRunning)] = "Guardando cambios...";
     text[at(TextId::CommitStartFailed)] = "No se pudo empezar a guardar.";
     text[at(TextId::CommitSummary)] = "Subidos {0}, descargados {1}, movidos {2}, eliminados {3}.";
@@ -120,9 +128,13 @@ constexpr Translation build() {
     text[at(TextId::IssueUploadNotStored)] = "La subida no se completó. Sigue en tu partida.";
     text[at(TextId::IssueCloudSlotDifferent)] = "El espacio en la nube tiene otro Pokémon, así que sigue en tu partida.";
     text[at(TextId::IssueCloudSlotTrading)] = "Este Pokémon está en una oferta de intercambio, así que sigue en la nube.";
-    text[at(TextId::IssueCloudClaimFailed)] = "La nube no pudo confirmar este Pokémon, así que no se movió nada.";
-    text[at(TextId::IssueUploadUndone)] = "Falló el último paso del guardado, así que se deshizo la subida. Sigue en tu partida.";
-    text[at(TextId::IssueUploadNotUndone)] = "Falló el último paso del guardado y no se pudo quitar su copia de la nube. Ahora está en tu partida y en {0}.";
+    text[at(TextId::IssueCloudClaimFailed)] = "La nube no pudo confirmar este Pokémon, así que se quedó en la nube.";
+    text[at(TextId::IssueMovedInCloud)] = "Se movió a este espacio de la nube, pero el resto de su cambio no se aplicó.";
+    text[at(TextId::IssueRemovalUnconfirmed)] = "La nube no confirmó la eliminación, así que puede seguir en la nube. Busca una segunda copia.";
+    text[at(TextId::IssueSaveUnconfirmed)] = "No se pudo comprobar la partida tras un error de escritura. Puede estar en tu partida, en la nube o en ambas: revisa las dos.";
+    text[at(TextId::IssuePartyKept)] = "Tu equipo necesita un Pokémon que no sea un Huevo, así que se quedó donde estaba.";
+    text[at(TextId::IssueUploadUndone)] = "No se pudo guardar su cambio, así que se deshizo la subida. Sigue en tu partida.";
+    text[at(TextId::IssueUploadNotUndone)] = "No se pudo guardar su cambio ni quitar su copia de la nube. Ahora está en tu partida y en {0}.";
     text[at(TextId::IssueSwapCancelled)] = "No se pudo subir el otro Pokémon del intercambio, así que se canceló y sigue en la nube.";
     text[at(TextId::IssuePlacedElsewhere)] = "Su espacio de destino seguía ocupado, así que se colocó aquí.";
     text[at(TextId::IssueReturnedToOrigin)] = "Su espacio de destino seguía ocupado, así que volvió a su sitio.";
@@ -269,6 +281,7 @@ constexpr Translation build() {
     text[at(TextId::PolicyAccept)] = "Aceptar (A)";
     text[at(TextId::PolicyAgeConfirmation)] = "Al aceptar, confirmas también que tienes al menos 16 años o que tus padres están de acuerdo.";
     text[at(TextId::PolicyDecline)] = "Rechazar (B)";
+    text[at(TextId::CommitKeepPowerOn)] = "No apagues la consola ni saques el cartucho.";
     return text;
 }
 

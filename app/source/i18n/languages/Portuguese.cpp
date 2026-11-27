@@ -62,6 +62,13 @@ constexpr Translation build() {
     text[at(TextId::SignInAgain)] = "Faça login novamente.";
     text[at(TextId::StillFetching)] = "Ainda carregando {0}...";
     text[at(TextId::GenerationIncompatible)] = "Gen {0} não pode entrar na Gen {1}.";
+    text[at(TextId::EggCannotChangeGeneration)] = "Ovos não podem mudar de geração.";
+    text[at(TextId::PokemonCorrupted)] = "Os dados de {0} estão corrompidos.";
+    text[at(TextId::PokemonNotInGame)] = "{0} não pode existir neste jogo.";
+    text[at(TextId::LossHeldItem)] = "o item segurado";
+    text[at(TextId::LossMoves)] = "alguns golpes";
+    text[at(TextId::LossHeldItemAndMoves)] = "o item segurado e alguns golpes";
+    text[at(TextId::ConfirmDataLoss)] = "{0} vai perder {1} aqui. Aperte A de novo para soltar.";
     text[at(TextId::BankBoxLoading)] = "Esta caixa do banco ainda está carregando.";
     text[at(TextId::SlotUnavailable)] = "As caixas deste jogo só têm {0} espaços.";
     text[at(TextId::FetchingOccupant)] = "Carregando o Pokémon do espaço...";
@@ -95,6 +102,7 @@ constexpr Translation build() {
     text[at(TextId::PlaceReasonUnavailable)] = "{0} indisponíveis no servidor";
     text[at(TextId::PlaceReasonOccupied)] = "{0} espaço(s) ocupado(s)";
     text[at(TextId::PlaceReasonWrongFormat)] = "{0} não cabem neste jogo salvo";
+    text[at(TextId::PlaceReasonDataLoss)] = "{0} perderiam dados, solte um por vez";
     text[at(TextId::CommitRunning)] = "Salvando alterações...";
     text[at(TextId::CommitStartFailed)] = "Não foi possível iniciar o salvamento.";
     text[at(TextId::CommitSummary)] = "Enviados {0}, baixados {1}, movidos {2}, removidos {3}.";
@@ -120,9 +128,13 @@ constexpr Translation build() {
     text[at(TextId::IssueUploadNotStored)] = "O envio não foi concluído. Ele ficou no seu jogo salvo.";
     text[at(TextId::IssueCloudSlotDifferent)] = "O espaço na nuvem tem outro Pokémon, então ele ficou no seu jogo salvo.";
     text[at(TextId::IssueCloudSlotTrading)] = "Este Pokémon está sendo oferecido em uma troca, então ficou na nuvem.";
-    text[at(TextId::IssueCloudClaimFailed)] = "A nuvem não pôde confirmar este Pokémon, então nada foi movido.";
-    text[at(TextId::IssueUploadUndone)] = "A etapa final do salvamento falhou, então o envio foi desfeito. Ele ficou no seu jogo salvo.";
-    text[at(TextId::IssueUploadNotUndone)] = "A etapa final do salvamento falhou e a cópia na nuvem não pôde ser removida. Ele agora está no seu jogo salvo e em {0}.";
+    text[at(TextId::IssueCloudClaimFailed)] = "A nuvem não pôde confirmar este Pokémon, então ele ficou na nuvem.";
+    text[at(TextId::IssueMovedInCloud)] = "Ele foi movido para este espaço da nuvem, mas o resto da mudança não foi aplicado.";
+    text[at(TextId::IssueRemovalUnconfirmed)] = "A nuvem não confirmou a remoção, então ele pode ainda estar na nuvem. Procure uma segunda cópia.";
+    text[at(TextId::IssueSaveUnconfirmed)] = "Não foi possível verificar o jogo salvo após um erro de gravação. Ele pode estar no jogo salvo, na nuvem ou em ambos: verifique os dois.";
+    text[at(TextId::IssuePartyKept)] = "Sua equipe precisa de um Pokémon que não seja um Ovo, então ele ficou onde estava.";
+    text[at(TextId::IssueUploadUndone)] = "A mudança não pôde ser salva, então o envio foi desfeito. Ele ficou no seu jogo salvo.";
+    text[at(TextId::IssueUploadNotUndone)] = "A mudança não pôde ser salva e a cópia na nuvem não pôde ser removida. Ele agora está no seu jogo salvo e em {0}.";
     text[at(TextId::IssueSwapCancelled)] = "O parceiro de troca não pôde ser enviado, então a troca foi cancelada e ele ficou na nuvem.";
     text[at(TextId::IssuePlacedElsewhere)] = "O espaço de destino continuou ocupado, então ele foi colocado aqui.";
     text[at(TextId::IssueReturnedToOrigin)] = "O espaço de destino continuou ocupado, então ele voltou para onde estava.";
@@ -269,6 +281,7 @@ constexpr Translation build() {
     text[at(TextId::PolicyAccept)] = "Aceitar (A)";
     text[at(TextId::PolicyAgeConfirmation)] = "Ao aceitar, você também confirma que tem pelo menos 16 anos ou que seus pais concordam.";
     text[at(TextId::PolicyDecline)] = "Recusar (B)";
+    text[at(TextId::CommitKeepPowerOn)] = "Não desligue o console nem remova o cartucho.";
     return text;
 }
 

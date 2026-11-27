@@ -38,7 +38,7 @@ UploadBatchResult DeviceCommitBackend::uploadBatch(const std::vector<UploadItem>
         batch.push_back({cloudSlot(item.destination), item.summary, item.payload, item.replaceOccupant});
     }
     const UploadResult sent = api_.upload(batch, accessToken_);
-    UploadBatchResult result{toRemote(sent.outcome), sent.message, {}};
+    UploadBatchResult result{toRemote(sent.outcome), sent.message, {}, sent.stored};
     for (const UploadRejection& rejection : sent.rejected) {
         if (validCloudSlot(rejection.slot)) {
             result.rejected.push_back({SlotRef::cloud(static_cast<std::uint16_t>(rejection.slot.boxPosition - 1),
@@ -48,12 +48,16 @@ UploadBatchResult DeviceCommitBackend::uploadBatch(const std::vector<UploadItem>
     return result;
 }
 
-std::optional<std::array<PokemonPayload, BoxSlotCount>> DeviceCommitBackend::readCloudBox(std::uint16_t boxKey) {
+std::optional<CloudListing> DeviceCommitBackend::readCloudBox(std::uint16_t boxKey) {
     BoxListResult listed = api_.listBox(static_cast<std::uint16_t>(boxKey + 1), accessToken_);
     if (!listed.success) {
         return std::nullopt;
     }
-    return std::move(listed.payloads);
+    CloudListing listing{};
+    for (std::size_t slot = 0; slot < BoxSlotCount; ++slot) {
+        listing[slot] = {listed.pokemon[slot].occupied() || listed.payloads[slot].known(), std::move(listed.payloads[slot])};
+    }
+    return listing;
 }
 
 RemoteResult DeviceCommitBackend::deleteCloud(const std::vector<SlotRef>& slots) {
@@ -96,24 +100,40 @@ ClaimBatchResult DeviceCommitBackend::claimCloud(const std::vector<ClaimItem>& i
     return result;
 }
 
-bool DeviceCommitBackend::writeLocal(const SlotRef& slot, const PokemonPayload& payload) {
-    return slot.kind == SlotKind::Party ? save_.writePartyPokemon(slot.slot, payload)
-                                        : save_.writePokemon(slot.box, slot.slot, payload);
+bool DeviceCommitBackend::writeLocal(const SlotRef& slot, const PokemonPayload& payload, bool fromCloud) {
+    const bool written = slot.kind == SlotKind::Party ? save_.writePartyPokemon(slot.slot, payload, fromCloud)
+                                                      : save_.writePokemon(slot.box, slot.slot, payload, fromCloud);
+    if (const PokemonPayload stored = readSave(slot); written && stored.known()) {
+        writtenAs_[stored.data] = payload;
+    }
+    return written;
+}
+
+PokemonPayload DeviceCommitBackend::readSave(const SlotRef& slot) const {
+    return slot.kind == SlotKind::Party ? save_.readPartySlot(slot.slot) : save_.readSlot(slot.box, slot.slot);
+}
+
+PokemonPayload DeviceCommitBackend::readLocal(const SlotRef& slot) {
+    PokemonPayload stored = readSave(slot);
+    const auto written = writtenAs_.find(stored.data);
+    return written == writtenAs_.end() ? stored : written->second;
 }
 
 bool DeviceCommitBackend::clearLocal(const SlotRef& slot) {
     return slot.kind == SlotKind::Party ? save_.clearPartySlot(slot.slot) : save_.clearSlot(slot.box, slot.slot);
 }
 
-bool DeviceCommitBackend::persistLocal(std::string& error, bool finalWrite) {
-    return save_.writeSave(error, finalWrite);
+bool DeviceCommitBackend::persistLocal(std::string& error) {
+    return save_.writeSave(error);
 }
 
-void DeviceCommitBackend::discardLocal() {
+bool DeviceCommitBackend::discardLocal() {
     std::string error;
     if (!save_.discardUnsavedChanges(error)) {
         Logger::instance().error("commit: could not reset the in-memory save: " + error);
+        return false;
     }
+    return save_.diskKnown();
 }
 
 void DeviceCommitBackend::log(const std::string& message) {

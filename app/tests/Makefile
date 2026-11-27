@@ -1,4 +1,5 @@
-# Host-side tests for the commit pipeline. Needs only g++ or clang++, no devkitARM.
+# Host-side tests for the commit pipeline, the save storage rules, the cross-game rules, the session
+# token renewal and the UI text rules. Needs only g++ or clang++, no devkitARM.
 #   make test             build and run
 #   make test SEED=1234   rerun the randomized drafts with another seed
 
@@ -12,11 +13,29 @@ BINARY := build/commit_tests
 UI_SOURCES := UiTests.cpp ../source/gui/TextLayout.cpp $(wildcard ../source/i18n/languages/*.cpp)
 UI_BINARY := build/ui_tests
 
+# host/ stands in for <3ds.h> and POSIX on MinGW; HostStubs.cpp replaces the libctru lock and logger.
+SAVE_SOURCES := SaveTests.cpp HostStubs.cpp ../source/save/adapter/DsSave.cpp ../source/save/storage/SaveFiles.cpp 	../source/save/storage/SaveBackups.cpp ../source/platform/FileSystem.cpp ../source/platform/AppPaths.cpp 	$(PKSM_CORE)/source/utils/crypto_checksums.cpp
+SAVE_HEADERS := $(wildcard host/*.h ../include/save/adapter/DsSave.hpp ../include/save/storage/*.hpp ../include/platform/*.hpp)
+SAVE_BINARY := build/save_tests
+
+# compat_tests links all of PKSM-Core; pksm-host/ points it at the data in ../romfs.
+PKSM_FLAGS := -std=gnu++20 -O1 -w
+PKSM_INCLUDES := -Ipksm-host -I../include $(addprefix -isystem $(PKSM_CORE)/,include include/enums include/personal memecrypto source/utils pcg-cpp/include)
+PKSM_OBJECTS := $(patsubst $(PKSM_CORE)/%,build/pksm/%.o,$(wildcard $(PKSM_CORE)/source/*/*.cpp $(PKSM_CORE)/memecrypto/*.c))
+COMPAT_SOURCES := CompatTests.cpp ../source/save/pokemon/PokemonTransfer.cpp
+COMPAT_BINARY := build/compat_tests
+
+SESSION_SOURCES := SessionTokensTests.cpp ../source/network/SessionTokens.cpp
+SESSION_BINARY := build/session_tokens_tests
+
 .PHONY: test clean
 
-test: $(BINARY) $(UI_BINARY)
+test: $(BINARY) $(UI_BINARY) $(SAVE_BINARY) $(COMPAT_BINARY) $(SESSION_BINARY)
 	./$(BINARY) $(if $(SEED),--seed $(SEED))
 	./$(UI_BINARY)
+	./$(SAVE_BINARY)
+	./$(COMPAT_BINARY)
+	./$(SESSION_BINARY)
 
 $(BINARY): $(SOURCES) $(HEADERS)
 	@mkdir -p build
@@ -25,6 +44,26 @@ $(BINARY): $(SOURCES) $(HEADERS)
 $(UI_BINARY): $(UI_SOURCES) ../include/gui/TextLayout.hpp ../include/i18n/TextId.hpp ../include/i18n/Translation.hpp
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $(UI_SOURCES) -o $@
+
+$(SAVE_BINARY): $(SAVE_SOURCES) $(SAVE_HEADERS)
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -Ihost -include host/compat.h $(INCLUDES) $(SAVE_SOURCES) -o $@
+
+$(COMPAT_BINARY): $(COMPAT_SOURCES) $(HEADERS) pksm-host/PKSMCORE_CONFIG.h $(PKSM_OBJECTS)
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) $(PKSM_INCLUDES) $(COMPAT_SOURCES) $(PKSM_OBJECTS) -o $@
+
+build/pksm/%.cpp.o: $(PKSM_CORE)/%.cpp pksm-host/PKSMCORE_CONFIG.h
+	@mkdir -p $(dir $@)
+	$(CXX) $(PKSM_FLAGS) $(PKSM_INCLUDES) -c $< -o $@
+
+build/pksm/%.c.o: $(PKSM_CORE)/%.c
+	@mkdir -p $(dir $@)
+	$(CC) -O1 -w -I$(PKSM_CORE)/memecrypto -c $< -o $@
+
+$(SESSION_BINARY): $(SESSION_SOURCES) ../include/network/SessionTokens.hpp ../include/network/ApiTypes.hpp
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -pthread $(INCLUDES) $(SESSION_SOURCES) -o $@
 
 clean:
 	rm -rf build

@@ -1,8 +1,11 @@
 #include "save/adapter/SaveAdapter.hpp"
 
+#include "platform/AppPaths.hpp"
 #include "platform/Logger.hpp"
+#include "save/adapter/DsSave.hpp"
 #include "save/adapter/SaveParser.hpp"
 #include "save/pokemon/PokemonTransfer.hpp"
+#include "save/storage/SaveBackups.hpp"
 
 #include <3ds.h>
 #include <pkx/PKX.hpp>
@@ -10,6 +13,12 @@
 
 #include <algorithm>
 #include <memory>
+
+namespace {
+bool sameBytes(const SaveImage& disk, const std::vector<std::uint8_t>& expected) {
+    return disk.size == expected.size() && std::equal(expected.begin(), expected.end(), disk.data.get());
+}
+}
 
 SaveAdapter::SaveAdapter() = default;
 SaveAdapter::~SaveAdapter() = default;
@@ -22,6 +31,8 @@ void SaveAdapter::close() {
     gameCode_.clear();
     previousBuffer_.clear();
     dirty_ = false;
+    diskUnknown_ = false;
+    backedUp_ = false;
 }
 
 bool SaveAdapter::open(const GameDescriptor& game, std::string& error, SaveSource::Preference preference) {
@@ -135,44 +146,38 @@ void SaveAdapter::beginPartyEdit() {
     }
 }
 
-void SaveAdapter::normalizeParty(bool compact) {
+// The party is a list in every game: a write never leaves a gap in it.
+void SaveAdapter::normalizeParty() {
     if (!partyEdited_) {
         return;
     }
     std::vector<std::unique_ptr<pksm::PKX>> members;
-    std::size_t lastOccupied = 0;
     for (std::size_t slot = 0; slot < PartySlotCount; ++slot) {
         auto member = save_->pkm(static_cast<std::uint8_t>(slot));
         if (member && static_cast<std::uint16_t>(member->species()) != 0) {
-            lastOccupied = slot + 1;
             members.push_back(std::move(member));
         }
     }
-    if (compact) {
-        auto empty = save_->emptyPkm();
-        for (std::size_t slot = 0; slot < PartySlotCount; ++slot) {
-            if (slot < members.size()) {
-                save_->pkm(*members[slot], static_cast<std::uint8_t>(slot));
-            } else if (empty) {
-                save_->pkm(*empty, static_cast<std::uint8_t>(slot));
-            }
+    auto empty = save_->emptyPkm();
+    for (std::size_t slot = 0; slot < PartySlotCount; ++slot) {
+        if (slot < members.size()) {
+            save_->pkm(*members[slot], static_cast<std::uint8_t>(slot));
+        } else if (empty) {
+            save_->pkm(*empty, static_cast<std::uint8_t>(slot));
         }
-        save_->partyCount(static_cast<std::uint8_t>(members.size()));
-    } else {
-        save_->partyCount(static_cast<std::uint8_t>(lastOccupied));
     }
+    save_->partyCount(static_cast<std::uint8_t>(members.size()));
     dirty_ = true;
-    Logger::instance().info("normalizeParty: " + std::to_string(members.size()) + " member(s), "
-                            + (compact ? std::string("compacted") : "count synced to " + std::to_string(lastOccupied)));
+    Logger::instance().info("normalizeParty: " + std::to_string(members.size()) + " member(s), compacted");
 }
 
-bool SaveAdapter::writeSave(std::string& error, bool finalWrite) {
+bool SaveAdapter::writeSave(std::string& error) {
     if (!save_ || !source_) {
         error = "No save loaded.";
         return false;
     }
     try {
-        normalizeParty(finalWrite);
+        normalizeParty();
     } catch (const std::exception& exception) {
         error = "The team could not be arranged.";
         Logger::instance().error("normalizeParty exception: " + std::string(exception.what()));
@@ -180,6 +185,9 @@ bool SaveAdapter::writeSave(std::string& error, bool finalWrite) {
     }
     if (!dirty_) {
         return true;
+    }
+    if (!backUpOnce(error)) {
+        return false;
     }
     try {
         save_->finishEditing();
@@ -189,31 +197,81 @@ bool SaveAdapter::writeSave(std::string& error, bool finalWrite) {
         return false;
     }
     const std::uint8_t* bytes = save_->rawData().get();
-    const std::vector<std::uint8_t> image(bytes, bytes + save_->getLength());
-    const bool written = source_->write(image, previousBuffer_);
+    std::vector<std::uint8_t> image(bytes, bytes + save_->getLength());
+    DsSave::keepFooter(image, previousBuffer_);
+    // Checked last, so that nothing slow runs between the check and the write.
+    const bool diskReady = diskHoldsLoadedSave(error);
+    const bool written = diskReady && source_->write(image, previousBuffer_);
     save_->beginEditing();
+    if (!diskReady) {
+        return false;
+    }
 
     const std::optional<SaveImage> disk = source_->reread();
-    const bool diskMatches = disk && disk->size == image.size()
-        && std::equal(image.begin(), image.end(), disk->data.get());
-    if (written && (diskMatches || !disk)) {
+    const bool diskMatches = disk && sameBytes(*disk, image);
+    // The disk decides: a write that reports an error but left the new image on disk succeeded.
+    // A cartridge that cannot be read back may be another card now, so it never counts.
+    if (diskMatches || (written && !disk && !source_->isCartridge())) {
         if (!disk) {
             Logger::instance().warning("writeSave: written, but the save could not be read back to verify it");
+        } else if (!written) {
+            Logger::instance().warning("writeSave: the write reported an error, but the disk holds the new save");
         }
         previousBuffer_ = image;
         dirty_ = false;
-        if (finalWrite) {
-            partyEdited_ = false;
-        }
+        partyEdited_ = false;
+        diskUnknown_ = false;
         Logger::instance().info("Save written and verified for " + gameCode_);
         return true;
     }
     if (disk) {
         previousBuffer_.assign(disk->data.get(), disk->data.get() + disk->size);
     }
-    error = written ? "The save on disk does not match what was written." : "Failed to write save.";
+    diskUnknown_ = !disk;
+    error = !disk  ? "The save could not be read back to check the write."
+          : written ? "The save on disk does not match what was written."
+                    : "Failed to write save.";
     Logger::instance().error("writeSave: " + error + (disk ? " (disk state re-read)" : " (disk state unknown)"));
     return false;
+}
+
+// A card swapped since the load (or a save changed behind our back) refuses the write before
+// it starts: write() only rewrites the sectors that differ from previousBuffer_.
+bool SaveAdapter::diskHoldsLoadedSave(std::string& error) {
+    const std::optional<SaveImage> disk = source_->reread();
+    if (disk && sameBytes(*disk, previousBuffer_)) {
+        return true;
+    }
+    if (!disk) {
+        error = "The save could not be read. Check the cartridge. Nothing was written.";
+    } else if (diskUnknown_) {
+        // The last write could not be read back: what the disk holds now is the known state.
+        previousBuffer_.assign(disk->data.get(), disk->data.get() + disk->size);
+        diskUnknown_ = false;
+        backedUp_ = false;
+        error = "The last write could not be checked. The save on disk is reloaded. Nothing was written.";
+    } else {
+        error = "The cartridge or save changed since it was loaded. Nothing was written.";
+    }
+    Logger::instance().error("writeSave refused before the write: " + error);
+    return false;
+}
+
+// The backup holds previousBuffer_; diskHoldsLoadedSave then checks that the disk holds it too.
+bool SaveAdapter::backUpOnce(std::string& error) {
+    if (backedUp_) {
+        return true;
+    }
+    if (!SaveBackups::store(AppPaths::file("backups/" + gameCode_), previousBuffer_)) {
+        error = "The save could not be backed up to the SD card. Nothing was written.";
+        return false;
+    }
+    backedUp_ = true;
+    return true;
+}
+
+bool SaveAdapter::diskKnown() const {
+    return !diskUnknown_;
 }
 
 bool SaveAdapter::discardUnsavedChanges(std::string& error) {

@@ -62,6 +62,13 @@ constexpr Translation build() {
     text[at(TextId::SignInAgain)] = "Accedi di nuovo.";
     text[at(TextId::StillFetching)] = "{0} ancora in caricamento...";
     text[at(TextId::GenerationIncompatible)] = "La Gen {0} non può entrare nella Gen {1}.";
+    text[at(TextId::EggCannotChangeGeneration)] = "Un Uovo non può cambiare generazione.";
+    text[at(TextId::PokemonCorrupted)] = "I dati di {0} sono danneggiati.";
+    text[at(TextId::PokemonNotInGame)] = "{0} non può esistere in questo gioco.";
+    text[at(TextId::LossHeldItem)] = "lo strumento tenuto";
+    text[at(TextId::LossMoves)] = "alcune mosse";
+    text[at(TextId::LossHeldItemAndMoves)] = "lo strumento tenuto e alcune mosse";
+    text[at(TextId::ConfirmDataLoss)] = "{0} qui perderà {1}. Premi di nuovo A per posarlo.";
     text[at(TextId::BankBoxLoading)] = "Questo box della banca è ancora in caricamento.";
     text[at(TextId::SlotUnavailable)] = "I box di questo gioco hanno solo {0} posti.";
     text[at(TextId::FetchingOccupant)] = "Caricamento del Pokémon nel posto...";
@@ -95,6 +102,7 @@ constexpr Translation build() {
     text[at(TextId::PlaceReasonUnavailable)] = "{0} non disponibili dal server";
     text[at(TextId::PlaceReasonOccupied)] = "posti occupati: {0}";
     text[at(TextId::PlaceReasonWrongFormat)] = "{0} non entrano in questo salvataggio";
+    text[at(TextId::PlaceReasonDataLoss)] = "{0} perderebbero dati, posali uno alla volta";
     text[at(TextId::CommitRunning)] = "Salvataggio delle modifiche...";
     text[at(TextId::CommitStartFailed)] = "Impossibile avviare il salvataggio.";
     text[at(TextId::CommitSummary)] = "Caricati {0}, scaricati {1}, spostati {2}, rimossi {3}.";
@@ -120,9 +128,13 @@ constexpr Translation build() {
     text[at(TextId::IssueUploadNotStored)] = "Il caricamento non è riuscito. È rimasto nel tuo salvataggio.";
     text[at(TextId::IssueCloudSlotDifferent)] = "Il posto nel cloud contiene un altro Pokémon, quindi è rimasto nel tuo salvataggio.";
     text[at(TextId::IssueCloudSlotTrading)] = "Questo Pokémon è offerto in uno scambio, quindi è rimasto nel cloud.";
-    text[at(TextId::IssueCloudClaimFailed)] = "Il cloud non ha potuto confermare questo Pokémon, quindi non è stato spostato nulla.";
-    text[at(TextId::IssueUploadUndone)] = "L'ultimo passo del salvataggio non è riuscito, quindi il caricamento è stato annullato. È rimasto nel tuo salvataggio.";
-    text[at(TextId::IssueUploadNotUndone)] = "L'ultimo passo del salvataggio non è riuscito e la copia nel cloud non è stata rimossa. Ora è nel tuo salvataggio e in {0}.";
+    text[at(TextId::IssueCloudClaimFailed)] = "Il cloud non ha potuto confermare questo Pokémon, quindi è rimasto nel cloud.";
+    text[at(TextId::IssueMovedInCloud)] = "È stato spostato in questo posto del cloud, ma il resto della modifica non è stato applicato.";
+    text[at(TextId::IssueRemovalUnconfirmed)] = "Il cloud non ha confermato la rimozione, quindi potrebbe essere ancora nel cloud. Controlla se c'è una seconda copia.";
+    text[at(TextId::IssueSaveUnconfirmed)] = "Il salvataggio non è stato verificato dopo un errore di scrittura. Potrebbe essere nel salvataggio, nel cloud o in entrambi: controlla entrambi.";
+    text[at(TextId::IssuePartyKept)] = "La tua squadra ha bisogno di un Pokémon che non sia un Uovo, quindi è rimasto dov'era.";
+    text[at(TextId::IssueUploadUndone)] = "La modifica non è stata salvata, quindi il caricamento è stato annullato. È rimasto nel tuo salvataggio.";
+    text[at(TextId::IssueUploadNotUndone)] = "La modifica non è stata salvata e la copia nel cloud non è stata rimossa. Ora è nel tuo salvataggio e in {0}.";
     text[at(TextId::IssueSwapCancelled)] = "Il Pokémon da scambiare non è stato caricato, quindi lo scambio è stato annullato ed è rimasto nel cloud.";
     text[at(TextId::IssuePlacedElsewhere)] = "Il posto di destinazione è rimasto occupato, quindi è stato posato qui.";
     text[at(TextId::IssueReturnedToOrigin)] = "Il posto di destinazione è rimasto occupato, quindi è tornato dov'era.";
@@ -269,6 +281,7 @@ constexpr Translation build() {
     text[at(TextId::PolicyAccept)] = "Accetta (A)";
     text[at(TextId::PolicyAgeConfirmation)] = "Accettando confermi anche di avere almeno 16 anni o il consenso dei tuoi genitori.";
     text[at(TextId::PolicyDecline)] = "Rifiuta (B)";
+    text[at(TextId::CommitKeepPowerOn)] = "Non spegnere la console e non rimuovere la scheda di gioco.";
     return text;
 }
 

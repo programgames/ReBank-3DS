@@ -49,6 +49,7 @@ struct UploadResult {
     RequestOutcome outcome = RequestOutcome::Unknown;
     std::string message;
     std::vector<UploadRejection> rejected;
+    std::size_t stored = 0; // the server's count of stored Pokemon, on success
 };
 
 enum class ClaimState : std::uint8_t {

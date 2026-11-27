@@ -28,6 +28,7 @@ public:
     void render() override;
 
     void pollBackgroundWork();
+    bool commitRunning() const { return commit_.running(); }
     bool backgroundWorkRunning() const { return commit_.running() || cloudSync_.renameInProgress(); }
 
     void onGameOpened();

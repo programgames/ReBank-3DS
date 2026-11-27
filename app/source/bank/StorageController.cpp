@@ -287,6 +287,8 @@ void StorageController::initializeFromOpenedGame(SaveLoadService::OpenGameResult
     resetDrafts();
     session_.trashConfirmVisible = false;
     session_.saveSummary = std::move(result.save);
+    session_.boxCapacity = session_.saveAdapter.boxCapacity();
+    session_.saveGeneration = session_.saveAdapter.gameGeneration();
     session_.localBox = result.localBox;
     session_.cloudBox = 0;
     session_.localBoxName = std::move(result.localBoxName);

@@ -56,6 +56,7 @@ private:
     void onAuthFailed(const AuthOutcome& outcome);
     void onSignedIn(AuthOperation operation);
     void pollSessionRejected();
+    void guardCriticalWork();
     void pollSaveLoad();
     void pollBankLoad();
     void resetAccountState();
@@ -65,6 +66,15 @@ private:
     void renderTop(C3D_RenderTarget* target, C2D_TextBuf buffer, float eyeOffset);
     void renderBottom();
 
+    // Declared first so it is destroyed last: every worker the members below own has joined by then,
+    // so none reads PKSM i18n or romfs after they are gone.
+    struct RuntimeServices {
+        RuntimeServices();
+        ~RuntimeServices();
+        RuntimeServices(const RuntimeServices&) = delete;
+        RuntimeServices& operator=(const RuntimeServices&) = delete;
+    };
+    RuntimeServices runtime_;
     Localization localization_;
     ScreenId screen_ = ScreenId::Intro;
     ScreenId previousScreen_ = ScreenId::Welcome;
@@ -80,12 +90,13 @@ private:
     UpdateFlow updateFlow_;
     AccountState account_;
     LoadService loadService_{cloudApi_, account_.session};
-    AccountFlow accountFlow_{accountApi_, account_, loadService_};
+    AccountFlow accountFlow_{accountApi_, account_, loadService_, http_.session()};
     SaveAdapter saveAdapter_;
     SaveLoadService saveLoadService_{saveAdapter_};
     MusicPlayer music_;
     CloudCache cloudCache_;
     bool running_ = true;
+    bool criticalWorkGuarded_ = false;
     AppContext context_{*this,       ui_,          resources_,       localization_, errors_,
                         status_,     account_,     update_,          cloudCache_,   accountApi_,
                         cloudApi_,   releaseApi_,  saveAdapter_,     saveLoadService_, loadService_,

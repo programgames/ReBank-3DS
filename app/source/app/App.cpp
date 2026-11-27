@@ -30,14 +30,24 @@ TextId authFailureTitle(AuthOperation operation) {
 }
 }
 
+App::RuntimeServices::RuntimeServices() {
+    romfsInit();
+    // Runs before localization_ exists; a temporary Localization reads the same console language.
+    i18n::init(Localization().dataLanguage());
+}
+
+App::RuntimeServices::~RuntimeServices() {
+    i18n::exit();
+    romfsExit();
+}
+
 App::App(std::string executablePath, bool homebrew)
     : updateFlow_(releaseApi_, std::move(executablePath), update_) {
     update_.homebrew = homebrew;
     Logger::instance().initialize();
     Logger::instance().info("Client boot");
     Logger::instance().info("Server " + ServerConfig::baseUrl());
-    romfsInit();
-    i18n::init(localization_.dataLanguage());
+    http_.setRefresher([this](const std::string& refreshToken) { return accountApi_.refresh(refreshToken); });
     music_.start("romfs:/assets/music.ogg", "romfs:/assets/music_vc.ogg");
     resources_.load();
     ui_.setFont(resources_.textFont);
@@ -48,13 +58,12 @@ App::App(std::string executablePath, bool homebrew)
 App::~App() {
     Logger::instance().info("Client shutdown");
     music_.stop();
-    i18n::exit();
-    romfsExit();
 }
 
 int App::run() {
     while (aptMainLoop() && running_) {
         update(InputFrame::read());
+        guardCriticalWork();
         render();
     }
     return 0;
@@ -112,6 +121,7 @@ void App::update(const InputFrame& input) {
         running_ = false;
         return;
     }
+    const std::uint32_t errorsShownBefore = errors_.shownCount();
     pollBackgroundWork();
     switch (updateFlow_.pollNotice()) {
         case UpdateFlow::Notice::Ended:
@@ -123,7 +133,8 @@ void App::update(const InputFrame& input) {
             break;
     }
     if (errors_.visible()) {
-        if (input.pressed(KEY_A | KEY_B) || input.tapped(ErrorDialogOkButton)) {
+        // An error raised this frame has not been drawn yet: the same press must not close it.
+        if (errors_.shownCount() == errorsShownBefore && (input.pressed(KEY_A | KEY_B) || input.tapped(ErrorDialogOkButton))) {
             errors_.dismiss();
         }
         return;
@@ -150,11 +161,26 @@ void App::pollBackgroundWork() {
     pollUpdate();
     pollAuth();
     accountFlow_.pollWelcomeBack();
+    accountFlow_.pollRenewedSession();
     pollSaveLoad();
     pollBankLoad();
     bankScreen_.pollBackgroundWork();
     pollSessionRejected();
     loadingScreen_.tick();
+}
+
+void App::guardCriticalWork() {
+    // HOME or sleep in the middle of a save write or a CIA install can leave either half done.
+    // Verifying too: the worker moves on to Installing on its own, before this runs again.
+    const UpdateStage stage = update_.progress.stage.load();
+    const bool critical = bankScreen_.commitRunning()
+        || (updateFlow_.running() && (stage == UpdateStage::Verifying || stage == UpdateStage::Installing));
+    if (critical == criticalWorkGuarded_) {
+        return;
+    }
+    criticalWorkGuarded_ = critical;
+    aptSetHomeAllowed(!critical);
+    aptSetSleepAllowed(!critical);
 }
 
 void App::finishIntro() {
@@ -253,8 +279,17 @@ void App::pollSessionRejected() {
 void App::pollSaveLoad() {
     switch (saveLoadService_.poll()) {
         case SaveLoadService::Operation::DiscoverGames:
-        case SaveLoadService::Operation::RescanCartridge:
             gameSelectScreen_.populateFromDiscovered(saveLoadService_.discoveredGames);
+            show(ScreenId::GameSelect);
+            return;
+        case SaveLoadService::Operation::RescanCartridge:
+            // The user may have left GameSelect (logout, plugins, logs) while the rescan ran: keep the
+            // screen, and drop the result once signed out (the next sign-in lists the games again).
+            if (account_.session.accessToken.empty()) {
+                saveLoadService_.discoveredGames.clear();
+            } else {
+                gameSelectScreen_.populateFromDiscovered(saveLoadService_.discoveredGames);
+            }
             return;
         case SaveLoadService::Operation::OpenGame:
             if (saveLoadService_.openGameResult.success) {
