@@ -19,7 +19,6 @@ jobs:
   build-3ds:
     name: 3DSX and CIA
     runs-on: ubuntu-latest
-    container: devkitpro/devkitarm:20260610
     env:
       MAKEROM_URL: https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.19.0/makerom-v0.19.0-ubuntu_x86_64.zip
       MAKEROM_SHA256: 287b809dec064e0ad597e3d272c49ecb7eed41693d5ee6fef9d8a8aa24c2497e
@@ -33,15 +32,18 @@ jobs:
         run: |
           cp config/client-secret.mk.example config/client-secret.mk
           cp source/security/RequestSigning.cpp.example source/security/RequestSigning.cpp
+      # Only make runs in the devkitARM image: makerom needs a newer glibc than that image has.
       - name: Build the 3DSX
-        run: make -j"$(nproc)"
+        uses: docker://devkitpro/devkitarm:20260610
+        with:
+          args: make -C app -j4
       - name: Install makerom
         run: |
-          curl -fsSL --retry 3 -o /tmp/makerom.zip "$MAKEROM_URL"
-          echo "$MAKEROM_SHA256  /tmp/makerom.zip" | sha256sum -c -
-          unzip -o /tmp/makerom.zip -d /usr/local/bin
-          chmod +x /usr/local/bin/makerom
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/makerom.zip" "$MAKEROM_URL"
+          echo "$MAKEROM_SHA256  $RUNNER_TEMP/makerom.zip" | sha256sum -c -
+          unzip -o "$RUNNER_TEMP/makerom.zip" -d "$RUNNER_TEMP/makerom"
+          chmod +x "$RUNNER_TEMP/makerom/makerom"
       - name: Build the CIA
         run: >
-          makerom -f cia -o rebank.cia -rsf packaging/rebank.rsf -target t
+          "$RUNNER_TEMP/makerom/makerom" -f cia -o rebank.cia -rsf packaging/rebank.rsf -target t
           -elf rebank.elf -icon rebank.smdh -banner packaging/icon/banner.bnr -desc app:7
