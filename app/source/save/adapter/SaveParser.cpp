@@ -1,6 +1,7 @@
 #include "save/adapter/SaveParser.hpp"
 
 #include "platform/Logger.hpp"
+#include "save/adapter/DsSave.hpp"
 #include "save/pokemon/PokemonTransfer.hpp"
 
 #include <sav/Sav.hpp>
@@ -55,6 +56,12 @@ std::unique_ptr<pksm::Sav> detect(const GameDescriptor& game, const SaveImage& i
 
 namespace SaveParser {
 std::unique_ptr<pksm::Sav> parse(const GameDescriptor& game, const SaveImage& image, std::string& error) {
+    if (DsSave::covers(game.code) && !DsSave::valid(game.code, image.data.get(), image.size)) {
+        error = "This is not a valid save for this game. It is blank, damaged or from another version.";
+        Logger::instance().error("DS save of " + std::string(game.code) + " failed the block checks ("
+                                 + std::to_string(image.size) + " bytes)");
+        return nullptr;
+    }
     std::unique_ptr<pksm::Sav> save;
     try {
         save = detect(game, image);

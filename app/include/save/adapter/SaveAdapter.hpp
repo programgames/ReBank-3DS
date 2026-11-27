@@ -70,6 +70,8 @@ private:
     std::uint8_t saveFormat() const;
     void beginPartyEdit();
     void normalizeParty();
+    bool diskHoldsLoadedSave(std::string& error);
+    bool backUpOnce(std::string& error);
     template <typename Edit>
     bool edit(const char* action, Edit&& change);
     bool storeEmpty(const std::function<void(const pksm::PKX&)>& store);
@@ -82,4 +84,5 @@ private:
     bool dirty_ = false;
     bool partyEdited_ = false;
     bool diskUnknown_ = false;
+    bool backedUp_ = false;
 };
