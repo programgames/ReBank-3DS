@@ -18,7 +18,7 @@ public:
     std::optional<CloudListing> readCloudBox(std::uint16_t boxKey) override;
     RemoteResult deleteCloud(const std::vector<SlotRef>& slots) override;
     ClaimBatchResult claimCloud(const std::vector<ClaimItem>& items) override;
-    bool writeLocal(const SlotRef& slot, const PokemonPayload& payload) override;
+    bool writeLocal(const SlotRef& slot, const PokemonPayload& payload, bool fromCloud) override;
     bool clearLocal(const SlotRef& slot) override;
     PokemonPayload readLocal(const SlotRef& slot) override;
     bool persistLocal(std::string& error) override;

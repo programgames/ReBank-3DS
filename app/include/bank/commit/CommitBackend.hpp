@@ -73,7 +73,8 @@ public:
     virtual std::optional<CloudListing> readCloudBox(std::uint16_t boxKey) = 0;
     virtual RemoteResult deleteCloud(const std::vector<SlotRef>& slots) = 0;
     virtual ClaimBatchResult claimCloud(const std::vector<ClaimItem>& items) = 0;
-    virtual bool writeLocal(const SlotRef& slot, const PokemonPayload& payload) = 0;
+    // fromCloud: the Pokemon arrives from the cloud, so the save records it as a trade.
+    virtual bool writeLocal(const SlotRef& slot, const PokemonPayload& payload, bool fromCloud) = 0;
     virtual bool clearLocal(const SlotRef& slot) = 0;
     // The Pokemon in a slot of the save in memory; an empty payload for an empty slot.
     virtual PokemonPayload readLocal(const SlotRef& slot) = 0;

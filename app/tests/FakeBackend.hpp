@@ -266,7 +266,7 @@ public:
         return result;
     }
 
-    bool writeLocal(const SlotRef& slot, const PokemonPayload& payload) override {
+    bool writeLocal(const SlotRef& slot, const PokemonPayload& payload, bool) override {
         if (hit(Call::WriteLocal) == Mode::Fail) {
             return false;
         }

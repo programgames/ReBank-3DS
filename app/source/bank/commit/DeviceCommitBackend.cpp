@@ -100,9 +100,9 @@ ClaimBatchResult DeviceCommitBackend::claimCloud(const std::vector<ClaimItem>& i
     return result;
 }
 
-bool DeviceCommitBackend::writeLocal(const SlotRef& slot, const PokemonPayload& payload) {
-    const bool written = slot.kind == SlotKind::Party ? save_.writePartyPokemon(slot.slot, payload)
-                                                      : save_.writePokemon(slot.box, slot.slot, payload);
+bool DeviceCommitBackend::writeLocal(const SlotRef& slot, const PokemonPayload& payload, bool fromCloud) {
+    const bool written = slot.kind == SlotKind::Party ? save_.writePartyPokemon(slot.slot, payload, fromCloud)
+                                                      : save_.writePokemon(slot.box, slot.slot, payload, fromCloud);
     if (const PokemonPayload stored = readSave(slot); written && stored.known()) {
         writtenAs_[stored.data] = payload;
     }

@@ -198,7 +198,9 @@ CommitExecutor::LayoutOutcome CommitExecutor::applyLayout(const LocalLayout& tar
             continue;
         }
         changed = true;
-        const bool ok = occupant ? backend_.writeLocal(slot, payloadOf(*occupant)) : backend_.clearLocal(slot);
+        const bool ok = occupant
+            ? backend_.writeLocal(slot, payloadOf(*occupant), plan_.transfers[*occupant].origin.isCloud())
+            : backend_.clearLocal(slot);
         if (!ok) {
             backend_.discardLocal();
             return {false, occupant ? occupant : before, occupant.has_value()};

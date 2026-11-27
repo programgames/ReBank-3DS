@@ -12,6 +12,13 @@ void logSlot(const std::string& action, const std::string& location, const Pokem
                             + " \"" + mon.nickname + "\" payload=" + payloadTag(payload.data)
                             + " (" + std::to_string(payload.data.size()) + " bytes)");
 }
+
+TextId lossText(const PokemonTransfer::ImportLoss& loss) {
+    if (loss.heldItem && loss.moves) {
+        return TextId::LossHeldItemAndMoves;
+    }
+    return loss.heldItem ? TextId::LossHeldItem : TextId::LossMoves;
+}
 }
 
 void HandController::pickUp() {
@@ -57,9 +64,7 @@ void HandController::drop() {
     }
     const StorageAddress address = session_.focusedAddress();
     const std::size_t slot = session_.focusedSlot;
-    if (address.isInSave() && !session_.saveAdapter.canImportPokemon(hand.payload)) {
-        context_.status = context_.text.format(TextId::GenerationIncompatible,
-            {std::to_string(hand.payload.format), std::to_string(session_.saveAdapter.gameGeneration())});
+    if (address.isInSave() && !acceptedBySave()) {
         return;
     }
     if (!storage_.slots().loaded(address)) {
@@ -97,6 +102,37 @@ void HandController::drop() {
 void HandController::completeCloudSwap(std::size_t slot, PokemonPayload occupantPayload) {
     const StorageAddress bank{StoragePane::Cloud, false};
     swapHand(bank, slot, {session_.cloud.summaries[slot], std::move(occupantPayload)});
+}
+
+
+bool HandController::acceptedBySave() {
+    const Hand& hand = session_.hand;
+    const PokemonTransfer::ImportCheck check = session_.saveAdapter.checkImport(hand.payload);
+    switch (check.refusal) {
+        case PokemonTransfer::ImportRefusal::None:
+            break;
+        case PokemonTransfer::ImportRefusal::Generation:
+            context_.status = context_.text.format(TextId::GenerationIncompatible,
+                {std::to_string(hand.payload.format), std::to_string(session_.saveAdapter.gameGeneration())});
+            return false;
+        case PokemonTransfer::ImportRefusal::Egg:
+            context_.status = context_.text.get(TextId::EggCannotChangeGeneration);
+            return false;
+        case PokemonTransfer::ImportRefusal::Corrupted:
+            context_.status = context_.text.format(TextId::PokemonCorrupted, {hand.summary.nickname});
+            return false;
+        case PokemonTransfer::ImportRefusal::NotInGame:
+            context_.status = context_.text.format(TextId::PokemonNotInGame, {hand.summary.nickname});
+            return false;
+    }
+    if (check.loss.any() && lossConfirmedFor_ != session_.handGeneration) {
+        lossConfirmedFor_ = session_.handGeneration;
+        context_.status = context_.text.format(TextId::ConfirmDataLoss,
+            {hand.summary.nickname, context_.text.get(lossText(check.loss))});
+        Logger::instance().info("drop held back: data loss shown for species " + std::to_string(hand.summary.species));
+        return false;
+    }
+    return true;
 }
 
 
