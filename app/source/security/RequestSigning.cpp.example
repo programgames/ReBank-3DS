@@ -1,0 +1,20 @@
+// Placeholder for the private request-signing implementation.
+//
+// Copy this file to RequestSigning.cpp to build ReBank from a fresh clone. It sends an empty
+// X-Client-Signature, so a server that checks signatures rejects the requests. Replace the body
+// with the scheme that your server verifies. Never commit the real RequestSigning.cpp.
+
+#include "security/RequestSigning.hpp"
+
+namespace RequestSigning {
+std::string sign(
+    [[maybe_unused]] std::string_view method,
+    [[maybe_unused]] std::string_view path,
+    [[maybe_unused]] std::string_view version,
+    [[maybe_unused]] std::string_view timestamp,
+    [[maybe_unused]] const std::string& body,
+    [[maybe_unused]] std::string_view secret
+) {
+    return {};
+}
+}
