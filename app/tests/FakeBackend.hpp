@@ -106,11 +106,13 @@ enum class Mode : std::uint8_t {
     RejectFirst,       // uploadBatch: Refused with the first item in `rejected`, nothing stored
     ChangedFirst,      // claimCloud: the first claim is CloudClaim::Changed
     LockedFirst,       // claimCloud: the first claim is CloudClaim::Locked
-    // Server and device behaviour described in issue #1. The sweep does not use them.
-    DoneMissingLast,      // uploadBatch: Done, but the last item was not stored (#1 finding 1)
+    // Server and device behaviour described in issue #1.
+    DoneMissingLast,      // uploadBatch: Done, but the server stored and counts one item fewer (#1 finding 1)
     RejectFirstStoreRest, // uploadBatch: Refused for the first item, the others stored (#1 finding 1)
     FailButLanded,        // persistLocal: false, but the save reached the disk (#1 finding 2)
-    DeleteFirstThenFail   // deleteCloud: the first slot is deleted, then Refused (#1 finding 7)
+    DeleteFirstThenFail,  // deleteCloud: the first slot is deleted, then Refused (#1 finding 7)
+    UnknownCleared,       // uploadBatch: Unknown; the destinations end empty, nothing stored
+    FailDiskUnknown       // persistLocal: false, the save reached the disk, but the disk could not be read back
 };
 
 using CallCounts = std::array<int, static_cast<std::size_t>(Call::Count)>;
@@ -122,7 +124,8 @@ inline bool supports(Call call, Mode mode) {
             return mode == Mode::Refused || mode == Mode::UnknownNotApplied || mode == Mode::UnknownApplied;
         case Call::UploadBatch:
             return mode == Mode::Refused || mode == Mode::UnknownNotApplied || mode == Mode::UnknownApplied
-                || mode == Mode::RejectFirst || mode == Mode::DoneMissingLast || mode == Mode::RejectFirstStoreRest;
+                || mode == Mode::RejectFirst || mode == Mode::DoneMissingLast || mode == Mode::RejectFirstStoreRest
+                || mode == Mode::UnknownCleared;
         case Call::DeleteCloud:
             return mode == Mode::Refused || mode == Mode::UnknownNotApplied || mode == Mode::UnknownApplied
                 || mode == Mode::DeleteFirstThenFail;
@@ -130,7 +133,7 @@ inline bool supports(Call call, Mode mode) {
             return mode == Mode::Refused || mode == Mode::UnknownNotApplied || mode == Mode::ChangedFirst
                 || mode == Mode::LockedFirst;
         case Call::PersistLocal:
-            return mode == Mode::Fail || mode == Mode::FailButLanded;
+            return mode == Mode::Fail || mode == Mode::FailButLanded || mode == Mode::FailDiskUnknown;
         case Call::ReadCloudBox:
         case Call::WriteLocal:
         case Call::ClearLocal:
@@ -148,13 +151,16 @@ struct Fault {
     Mode mode;
 };
 
-// In-memory save and cloud. `working` is the save in memory, `disk` the last written save.
+// In-memory save and cloud. `working` is the save in memory, `disk` the save on disk, and
+// `known` what the device last read from the disk (discardLocal reloads it).
 class FakeBackend final : public CommitBackend {
 public:
     State disk;
     State working;
+    State known;
+    bool diskKnown = true;
     State cloud;
-    bool compactBoxes = false;          // Gen 1/2: boxes and party are lists, packed on every write
+    bool listBoxes = false;          // Gen 1/2: boxes and party are lists, packed on every write
     bool listingWithoutPayload = false; // readCloudBox lists occupied slots without their payload
     std::vector<Fault> faults;
     CallCounts calls{};
@@ -179,6 +185,12 @@ public:
         if (mode == Mode::UnknownNotApplied) {
             return {RemoteOutcome::Unknown, "injected", {}};
         }
+        if (mode == Mode::UnknownCleared) {
+            for (const UploadItem& item : items) {
+                cloud.erase(item.destination);
+            }
+            return {RemoteOutcome::Unknown, "injected", {}};
+        }
         if (mode == Mode::RejectFirst || mode == Mode::RejectFirstStoreRest) {
             for (std::size_t index = 1; mode == Mode::RejectFirstStoreRest && index < items.size(); ++index) {
                 cloud[items[index].destination] = monOf(items[index].payload);
@@ -198,17 +210,17 @@ public:
         for (std::size_t index = 0; index < stored; ++index) {
             cloud[items[index].destination] = monOf(items[index].payload);
         }
-        return {mode == Mode::UnknownApplied ? RemoteOutcome::Unknown : RemoteOutcome::Done, {}, {}};
+        return {mode == Mode::UnknownApplied ? RemoteOutcome::Unknown : RemoteOutcome::Done, {}, {}, stored};
     }
 
-    std::optional<std::array<PokemonPayload, BoxSlotCount>> readCloudBox(std::uint16_t boxKey) override {
+    std::optional<CloudListing> readCloudBox(std::uint16_t boxKey) override {
         if (hit(Call::ReadCloudBox) == Mode::Fail) {
             return std::nullopt;
         }
-        std::array<PokemonPayload, BoxSlotCount> listing{};
+        CloudListing listing{};
         for (const auto& [slot, mon] : cloud) {
             if (slot.box == boxKey) {
-                listing[slot.slot] = listingWithoutPayload ? PokemonPayload{} : payloadOf(mon);
+                listing[slot.slot] = {true, listingWithoutPayload ? PokemonPayload{} : payloadOf(mon)};
             }
         }
         return listing;
@@ -254,7 +266,7 @@ public:
         return result;
     }
 
-    bool writeLocal(const SlotRef& slot, const PokemonPayload& payload) override {
+    bool writeLocal(const SlotRef& slot, const PokemonPayload& payload, bool) override {
         if (hit(Call::WriteLocal) == Mode::Fail) {
             return false;
         }
@@ -270,18 +282,28 @@ public:
         return true;
     }
 
-    // Mirrors SaveAdapter::writeSave: the final write compacts the party, a Gen 1/2 save
-    // compacts its boxes and party on every write.
-    bool persistLocal(std::string& error, bool finalWrite) override {
+    PokemonPayload readLocal(const SlotRef& slot) override {
+        const auto found = working.find(slot);
+        return found == working.end() ? PokemonPayload{} : payloadOf(found->second);
+    }
+
+    // Mirrors SaveAdapter::writeSave: every write packs the party, and a Gen 1/2 save
+    // also packs its boxes.
+    bool persistLocal(std::string& error) override {
         const std::optional<Mode> mode = hit(Call::PersistLocal);
         if (mode == Mode::Fail) {
             error = "injected";
             return false;
         }
-        if (finalWrite || compactBoxes) {
-            packLists(working, compactBoxes);
-        }
+        packLists(working, listBoxes);
         disk = working;
+        if (mode == Mode::FailDiskUnknown) {
+            diskKnown = false;
+            error = "injected";
+            return false;
+        }
+        known = disk;
+        diskKnown = true;
         if (mode == Mode::FailButLanded) {
             error = "injected";
             return false;
@@ -289,7 +311,10 @@ public:
         return true;
     }
 
-    void discardLocal() override { working = disk; }
+    bool discardLocal() override {
+        working = known;
+        return diskKnown;
+    }
 
 private:
     std::optional<Mode> hit(Call call) {

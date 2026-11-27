@@ -2,6 +2,7 @@
 
 #include "save/catalog/GameCatalog.hpp"
 #include "save/pokemon/PokemonData.hpp"
+#include "save/pokemon/PokemonTransfer.hpp"
 #include "save/storage/SaveSource.hpp"
 
 #include <3ds.h>
@@ -41,20 +42,28 @@ public:
     std::optional<TrainerInfo> trainer() const;
     BoxSlots readBox(std::size_t box) const;
     bool slotOccupied(std::size_t box, std::size_t slot) const;
+    PokemonPayload readSlot(std::size_t box, std::size_t slot) const;
+    PokemonPayload readPartySlot(std::size_t slot) const;
+    // Gen 1/2 boxes are lists: every write packs them.
+    bool boxesAreLists() const;
     std::string boxName(std::size_t box) const;
     std::size_t boxCount() const;
     std::size_t boxCapacity() const;
     std::size_t currentBox() const;
     std::uint8_t gameGeneration() const;
-    bool canImportPokemon(const PokemonPayload& payload) const;
+    PokemonTransfer::ImportCheck checkImport(const PokemonPayload& payload) const;
     bool clearSlot(std::size_t box, std::size_t slot);
-    bool writePokemon(std::size_t box, std::size_t slot, const PokemonPayload& payload);
+    // asTrade: update handler, egg met data and Pokedex the way a trade does. Off for moves inside this save.
+    bool writePokemon(std::size_t box, std::size_t slot, const PokemonPayload& payload, bool asTrade);
     PartySlots readParty() const;
     std::size_t partyCount() const;
     bool clearPartySlot(std::size_t slot);
-    bool writePartyPokemon(std::size_t slot, const PokemonPayload& payload);
-    bool writeSave(std::string& error, bool finalWrite = true);
+    bool writePartyPokemon(std::size_t slot, const PokemonPayload& payload, bool asTrade);
+    // Packs the party, then writes the save. It succeeds when the disk holds the new image.
+    bool writeSave(std::string& error);
     bool discardUnsavedChanges(std::string& error);
+    // False after a failed write whose result could not be read back from the disk.
+    bool diskKnown() const;
 
 private:
     bool validBox(std::size_t box) const;
@@ -62,7 +71,9 @@ private:
     bool validPartySlot(std::size_t slot) const;
     std::uint8_t saveFormat() const;
     void beginPartyEdit();
-    void normalizeParty(bool compact);
+    void normalizeParty();
+    bool diskHoldsLoadedSave(std::string& error);
+    bool backUpOnce(std::string& error);
     template <typename Edit>
     bool edit(const char* action, Edit&& change);
     bool storeEmpty(const std::function<void(const pksm::PKX&)>& store);
@@ -74,4 +85,6 @@ private:
     std::vector<std::uint8_t> previousBuffer_;
     bool dirty_ = false;
     bool partyEdited_ = false;
+    bool diskUnknown_ = false;
+    bool backedUp_ = false;
 };

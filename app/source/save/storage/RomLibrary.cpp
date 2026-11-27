@@ -8,6 +8,7 @@
 #include "platform/KeyValueConfig.hpp"
 #include "platform/Logger.hpp"
 #include "save/catalog/RomGameCodes.hpp"
+#include "save/storage/SaveFiles.hpp"
 
 #include <3ds.h>
 #include <dirent.h>
@@ -120,7 +121,7 @@ std::vector<std::string> saveCandidates(const std::string& romPath) {
 
 std::optional<std::string> savePathFor(const std::string& romPath) {
     const std::vector<std::string> candidates = saveCandidates(romPath);
-    const auto match = std::find_if(candidates.begin(), candidates.end(), FileSystem::exists);
+    const auto match = std::find_if(candidates.begin(), candidates.end(), SaveFiles::existsAfterRecovery);
     return match == candidates.end() ? std::nullopt : std::optional(*match);
 }
 
@@ -207,7 +208,7 @@ const std::vector<RomEntry>& libraryRoms() {
 
 std::optional<RomSave> configuredSave(std::string_view code) {
     const auto path = KeyValueConfig::lookup(OverrideConfig, code);
-    if (!path || !FileSystem::exists(*path)) {
+    if (!path || !SaveFiles::existsAfterRecovery(*path)) {
         return std::nullopt;
     }
     return RomSave{{}, *path, 0};

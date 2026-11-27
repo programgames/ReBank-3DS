@@ -6,6 +6,8 @@
 #include "bank/StorageController.hpp"
 
 #include <cstddef>
+#include <cstdint>
+#include <optional>
 
 class HandController {
 public:
@@ -19,6 +21,8 @@ public:
     void returnHand();
 
 private:
+    // Refuses what the save's game cannot hold, and asks once before a drop that loses data.
+    bool acceptedBySave();
     void placeHand(StorageAddress address, std::size_t slot);
     void swapHand(StorageAddress address, std::size_t slot, SlotContents occupant);
     void startCloudFetch(LoadService::Operation operation, std::size_t slot, const PokemonSummary& summary);
@@ -26,4 +30,6 @@ private:
     BankContext& context_;
     BankSession& session_;
     StorageController& storage_;
+    // The hand generation whose data loss the user saw: the next drop into the save goes ahead.
+    std::optional<std::uint32_t> lossConfirmedFor_;
 };

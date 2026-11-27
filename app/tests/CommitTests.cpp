@@ -61,7 +61,7 @@ struct Case {
     State after;
     std::vector<Mon> trashed;
     std::set<Mon> eggs;
-    bool compactBoxes = false;
+    bool listBoxes = false;
     bool listingWithoutPayload = false;
 };
 
@@ -70,6 +70,12 @@ constexpr std::size_t LocalBoxes = 2;
 
 bool hasParty(const State& state) {
     return std::any_of(state.begin(), state.end(), [](const auto& entry) { return entry.first.kind == SlotKind::Party; });
+}
+
+bool hasHatchedParty(const State& state, const std::set<Mon>& eggs) {
+    return std::any_of(state.begin(), state.end(), [&](const auto& entry) {
+        return entry.first.kind == SlotKind::Party && eggs.count(entry.second) == 0;
+    });
 }
 
 // Most cases keep one Pokemon in the party, like the UI guard does.
@@ -89,28 +95,33 @@ CommitSnapshot snapshotOf(const Case& c) {
         snapshot.localBaselines[index] = {};
         snapshot.localDrafts[index] = {};
     }
+    const auto summary = [&c](Mon mon) {
+        PokemonSummary found = summaryOf(mon);
+        found.egg = c.eggs.count(mon) != 0;
+        return found;
+    };
     const auto fill = [&](const State& state, bool draft) {
         for (const auto& [slot, mon] : state) {
             switch (slot.kind) {
                 case SlotKind::Local: {
                     BoxSlots& slots = (draft ? snapshot.localDrafts : snapshot.localBaselines)[slot.box];
-                    slots.summaries[slot.slot] = summaryOf(mon);
+                    slots.summaries[slot.slot] = summary(mon);
                     slots.payloads[slot.slot] = payloadOf(mon);
                     break;
                 }
                 case SlotKind::Party: {
                     PartySlots& slots = draft ? snapshot.partyWorking : snapshot.partyBaseline;
-                    slots.summaries[slot.slot] = summaryOf(mon);
+                    slots.summaries[slot.slot] = summary(mon);
                     slots.payloads[slot.slot] = payloadOf(mon);
                     break;
                 }
                 case SlotKind::Cloud: {
                     CloudBoxDraft& cloud = snapshot.cloudBoxes[slot.box];
                     if (draft) {
-                        cloud.summaries[slot.slot] = summaryOf(mon);
+                        cloud.summaries[slot.slot] = summary(mon);
                         cloud.pending[slot.slot] = payloadOf(mon);
                     } else {
-                        cloud.baseline[slot.slot] = summaryOf(mon);
+                        cloud.baseline[slot.slot] = summary(mon);
                         cloud.payloads[slot.slot] = payloadOf(mon);
                     }
                     break;
@@ -146,11 +157,13 @@ Outcome execute(const Case& c, const std::vector<Fault>& faults) {
         (slot.isCloud() ? fake.cloud : fake.disk)[slot] = mon;
     }
     fake.working = fake.disk;
-    fake.compactBoxes = c.compactBoxes;
+    fake.known = fake.disk;
+    fake.listBoxes = c.listBoxes;
     fake.listingWithoutPayload = c.listingWithoutPayload;
     fake.faults = faults;
     const LocalSlotProbe probe{LocalBoxes,
-                               [&c](std::size_t boxIndex, std::size_t slot) { return c.before.count(box(boxIndex, slot)) != 0; }};
+                               [&c](std::size_t boxIndex, std::size_t slot) { return c.before.count(box(boxIndex, slot)) != 0; },
+                               BoxSlotCount, c.listBoxes};
     Outcome outcome;
     outcome.plan = planCommit(snapshotOf(c), probe);
     outcome.result = CommitExecutor(outcome.plan, fake, [](CommitPhase, int) {}).run();
@@ -212,12 +225,14 @@ std::vector<SlotRef> where(const State& state, Mon mon) {
     return slots;
 }
 
-// Where a Pokemon is, with every party slot counted as one place: invariant 2 checks the party order.
-std::vector<SlotRef> placesOf(const State& state, Mon mon) {
+// Where a Pokemon is, with a list counted as one place: the party (invariant 2 checks it), and a
+// Gen 1/2 box, where a Pokemon that stays shifts the others. Invariant 3 checks the order of a
+// clean commit.
+std::vector<SlotRef> placesOf(const State& state, Mon mon, bool listBoxes) {
     std::vector<SlotRef> slots = where(state, mon);
     for (SlotRef& slot : slots) {
-        if (slot.kind == SlotKind::Party) {
-            slot = party(0);
+        if (slot.kind == SlotKind::Party || (slot.kind == SlotKind::Local && listBoxes)) {
+            slot.slot = 0;
         }
     }
     return slots;
@@ -225,8 +240,8 @@ std::vector<SlotRef> placesOf(const State& state, Mon mon) {
 
 // Slot positions the game does not keep: the party is packed by the final write, and
 // a Gen 1/2 box is a list.
-State normalized(State state, bool compactBoxes) {
-    packLists(state, compactBoxes);
+State normalized(State state, bool listBoxes) {
+    packLists(state, listBoxes);
     return state;
 }
 
@@ -239,6 +254,8 @@ Mon monOfName(const std::string& name) {
 const char* contradictedClaim(IssueReason reason, const std::vector<SlotRef>& at, const std::vector<SlotRef>& before) {
     const bool inSave = std::any_of(at.begin(), at.end(), [](const SlotRef& slot) { return !slot.isCloud(); });
     const bool onlyInCloud = at.size() == 1 && at.front().isCloud();
+    const auto cloudPlaces = static_cast<std::size_t>(std::count_if(at.begin(), at.end(),
+        [](const SlotRef& slot) { return slot.isCloud(); }));
     switch (reason) {
         case IssueReason::UploadNotUndone:
         case IssueReason::DownloadNotRemoved:
@@ -254,7 +271,12 @@ const char* contradictedClaim(IssueReason reason, const std::vector<SlotRef>& at
             return inSave && at.size() <= 2 ? nullptr : "it is in the save, maybe also in the cloud";
         case IssueReason::CloudSlotTrading:
         case IssueReason::CloudRemoveFailed:
+        case IssueReason::CloudClaimFailed:
+        case IssueReason::MovedInCloud:
             return onlyInCloud ? nullptr : "it is in the cloud only";
+        case IssueReason::RemovalUnconfirmed:
+        case IssueReason::SaveUnconfirmed:
+            return cloudPlaces <= 1 && at.size() - cloudPlaces <= 1 ? nullptr : "it may still be in the cloud";
         case IssueReason::CloudSlotDifferent:
             return at.size() == 1 ? nullptr : "it was not copied";
         case IssueReason::DataNotLoaded:
@@ -264,8 +286,8 @@ const char* contradictedClaim(IssueReason reason, const std::vector<SlotRef>& at
         case IssueReason::NoParkingSlot:
         case IssueReason::WriteFailed:
         case IssueReason::RemoveFailed:
-        case IssueReason::CloudClaimFailed:
         case IssueReason::SwapCancelled:
+        case IssueReason::PartyKept:
             return at == before ? nullptr : "nothing changed";
         case IssueReason::CloudMoveFailed:
             return nullptr; // no claim about the location
@@ -317,9 +339,9 @@ Counts landedCounts(const Case& c, const State& finalState) {
 Failures checkInvariants(const Case& c, const Outcome& outcome) {
     Failures failures;
     const CommitResult& result = outcome.result;
-    const State before = normalized(c.before, c.compactBoxes);
-    const State draft = normalized(c.after, c.compactBoxes);
-    const State after = normalized(outcome.finalState, c.compactBoxes);
+    const State before = normalized(c.before, c.listBoxes);
+    const State draft = normalized(c.after, c.listBoxes);
+    const State after = normalized(outcome.finalState, c.listBoxes);
 
     // 1. Every Pokemon is in exactly one place (where it was, or where the draft put it),
     //    or the report names it, and then the report is true.
@@ -330,9 +352,9 @@ Failures checkInvariants(const Case& c, const Outcome& outcome) {
     for (const auto& entry : c.before) {
         const Mon mon = entry.second;
         const std::string name = "M" + std::to_string(mon);
-        const std::vector<SlotRef> at = placesOf(after, mon);
-        const std::vector<SlotRef> was = placesOf(before, mon);
-        const std::vector<SlotRef> planned = placesOf(draft, mon);
+        const std::vector<SlotRef> at = placesOf(after, mon, c.listBoxes);
+        const std::vector<SlotRef> was = placesOf(before, mon, c.listBoxes);
+        const std::vector<SlotRef> planned = placesOf(draft, mon, c.listBoxes);
         const auto issues = reported.find(mon);
         if (issues == reported.end()) {
             if (at != was && at != planned) {
@@ -477,6 +499,15 @@ Case cloudChainScenario() {
                     {{bank(1), 30}, {bank(2), 31}, {box(0, 1), 32}, {bank(0), 33}});
 }
 
+// A Gen 1/2 save, where every write packs the boxes: a move out of a box, and a swap
+// between the box and the cloud (#1 finding 3).
+Case listBoxScenario() {
+    Case c = scenario({{box(0, 0), 1}, {box(0, 1), 2}, {box(0, 2), 3}, {box(0, 3), 4}, {bank(0), 5}},
+                      {{bank(0), 1}, {box(0, 0), 5}, {box(1, 0), 2}, {box(0, 2), 3}, {box(0, 3), 4}});
+    c.listBoxes = true;
+    return c;
+}
+
 // Swaps that go through the party: party <-> cloud and party <-> box.
 Case partySwapScenario() {
     Case c;
@@ -490,6 +521,8 @@ TEST(mixed) { expectClean(failures, mixedScenario()); }
 TEST(cloud_chain) { expectClean(failures, cloudChainScenario()); }
 
 TEST(party_swaps) { expectClean(failures, partySwapScenario()); }
+
+TEST(list_boxes) { expectClean(failures, listBoxScenario()); }
 
 TEST(no_change) { expectClean(failures, scenario({{box(0, 0), 1}, {bank(0), 2}}, {{box(0, 0), 1}, {bank(0), 2}})); }
 
@@ -523,6 +556,8 @@ const char* modeName(Mode mode) {
         case Mode::RejectFirstStoreRest: return "reject-first-store-rest";
         case Mode::FailButLanded: return "fail-but-landed";
         case Mode::DeleteFirstThenFail: return "delete-first-then-fail";
+        case Mode::UnknownCleared: return "unknown-cleared";
+        case Mode::FailDiskUnknown: return "fail-disk-unknown";
     }
     return "?";
 }
@@ -530,16 +565,18 @@ const char* modeName(Mode mode) {
 std::vector<Mode> modesFor(Call call) {
     switch (call) {
         case Call::MoveCloud:
-        case Call::DeleteCloud:
             return {Mode::Refused, Mode::UnknownNotApplied, Mode::UnknownApplied};
+        case Call::DeleteCloud:
+            return {Mode::Refused, Mode::UnknownNotApplied, Mode::UnknownApplied, Mode::DeleteFirstThenFail};
         case Call::UploadBatch:
-            return {Mode::Refused, Mode::UnknownNotApplied, Mode::UnknownApplied, Mode::RejectFirst};
+            return {Mode::Refused, Mode::UnknownNotApplied, Mode::UnknownApplied, Mode::RejectFirst,
+                    Mode::DoneMissingLast, Mode::RejectFirstStoreRest, Mode::UnknownCleared};
         // The fake's claim changes nothing in the cloud (it creates no event Pokemon),
         // so "applied" and "not applied" are the same run.
         case Call::ClaimCloud:
             return {Mode::Refused, Mode::UnknownNotApplied, Mode::ChangedFirst, Mode::LockedFirst};
         case Call::PersistLocal:
-            return {Mode::Fail, Mode::FailButLanded};
+            return {Mode::Fail, Mode::FailButLanded, Mode::FailDiskUnknown};
         case Call::ReadCloudBox:
         case Call::WriteLocal:
         case Call::ClearLocal:
@@ -550,74 +587,8 @@ std::vector<Mode> modesFor(Call call) {
 }
 
 // Sweep runs that break an invariant because of a known bug. Each must still fail:
-// when one passes, the fix removes it here.
-constexpr const char* Finding2 = "#1 finding 2: the save reached the disk but the write reported failure";
-constexpr const char* Finding9 = "#1 finding 9: group dropped after its cloud moves ran, report says nothing changed";
-constexpr const char* Finding7 = "#1 finding 7: delete landed but was not confirmed, report says it exists twice";
-constexpr const char* Finding10 =
-    "#1 finding 10: a stop after cloud moves leaves a swapped Pokemon in another cloud slot, unreported";
-const std::map<std::string, const char*> KnownFailures = {
-    {"cloud-chain/clean/claimCloud#1/changed-first", Finding9},
-    {"cloud-chain/clean/claimCloud#1/locked-first", Finding9},
-    {"cloud-chain/clean/claimCloud#1/refused", Finding9},
-    {"cloud-chain/clean/claimCloud#1/unknown-not-applied", Finding9},
-    {"cloud-chain/clean/moveCloud#1/unknown-applied", Finding10},
-    {"cloud-chain/clean/moveCloud#2/unknown-applied", Finding10},
-    {"cloud-chain/clean/persistLocal#1/fail", Finding10},
-    {"cloud-chain/clean/persistLocal#1/fail-but-landed", Finding2},
-    {"cloud-chain/clean/persistLocal#2/fail-but-landed", Finding2},
-    {"cloud-chain/clean/writeLocal#1/fail", Finding9},
-    {"cloud-chain/final-save-fails/claimCloud#1/changed-first", Finding9},
-    {"cloud-chain/final-save-fails/claimCloud#1/locked-first", Finding9},
-    {"cloud-chain/final-save-fails/claimCloud#1/refused", Finding9},
-    {"cloud-chain/final-save-fails/claimCloud#1/unknown-not-applied", Finding9},
-    {"cloud-chain/final-save-fails/deleteCloud#1/unknown-applied", Finding7},
-    {"cloud-chain/final-save-fails/moveCloud#1/unknown-applied", Finding10},
-    {"cloud-chain/final-save-fails/moveCloud#2/unknown-applied", Finding10},
-    {"cloud-chain/final-save-fails/persistLocal#1/fail", Finding10},
-    {"cloud-chain/final-save-fails/persistLocal#1/fail-but-landed", Finding2},
-    {"cloud-chain/final-save-fails/writeLocal#1/fail", Finding9},
-    {"cloud-chain/upload1-reject-first/claimCloud#1/changed-first", Finding9},
-    {"cloud-chain/upload1-reject-first/claimCloud#1/locked-first", Finding9},
-    {"cloud-chain/upload1-reject-first/claimCloud#1/refused", Finding9},
-    {"cloud-chain/upload1-reject-first/claimCloud#1/unknown-not-applied", Finding9},
-    {"cloud-chain/upload1-reject-first/deleteCloud#1/unknown-applied", Finding7},
-    {"cloud-chain/upload1-reject-first/moveCloud#1/unknown-applied", Finding10},
-    {"cloud-chain/upload1-reject-first/moveCloud#2/unknown-applied", Finding10},
-    {"cloud-chain/upload1-reject-first/persistLocal#1/fail", Finding10},
-    {"cloud-chain/upload1-reject-first/persistLocal#1/fail-but-landed", Finding2},
-    {"cloud-chain/upload1-reject-first/writeLocal#1/fail", Finding9},
-    {"cloud-chain/upload1-unknown/claimCloud#1/changed-first", Finding9},
-    {"cloud-chain/upload1-unknown/claimCloud#1/locked-first", Finding9},
-    {"cloud-chain/upload1-unknown/claimCloud#1/refused", Finding9},
-    {"cloud-chain/upload1-unknown/claimCloud#1/unknown-not-applied", Finding9},
-    {"cloud-chain/upload1-unknown/moveCloud#1/unknown-applied", Finding10},
-    {"cloud-chain/upload1-unknown/moveCloud#2/unknown-applied", Finding10},
-    {"cloud-chain/upload1-unknown/persistLocal#1/fail", Finding10},
-    {"cloud-chain/upload1-unknown/persistLocal#1/fail-but-landed", Finding2},
-    {"cloud-chain/upload1-unknown/persistLocal#2/fail-but-landed", Finding2},
-    {"cloud-chain/upload1-unknown/writeLocal#1/fail", Finding9},
-    {"mixed/clean/deleteCloud#1/unknown-applied", Finding7},
-    {"mixed/clean/persistLocal#1/fail-but-landed", Finding2},
-    {"mixed/clean/persistLocal#2/fail-but-landed", Finding2},
-    {"mixed/final-save-fails/deleteCloud#1/unknown-applied", Finding7},
-    {"mixed/final-save-fails/deleteCloud#2/unknown-applied", Finding7},
-    {"mixed/final-save-fails/persistLocal#1/fail-but-landed", Finding2},
-    {"mixed/upload1-reject-first/deleteCloud#1/unknown-applied", Finding7},
-    {"mixed/upload1-reject-first/persistLocal#1/fail-but-landed", Finding2},
-    {"mixed/upload1-reject-first/persistLocal#2/fail-but-landed", Finding2},
-    {"mixed/upload1-unknown/deleteCloud#1/unknown-applied", Finding7},
-    {"mixed/upload1-unknown/persistLocal#1/fail-but-landed", Finding2},
-    {"mixed/upload1-unknown/persistLocal#2/fail-but-landed", Finding2},
-    {"party-swaps/clean/persistLocal#1/fail-but-landed", Finding2},
-    {"party-swaps/clean/persistLocal#2/fail-but-landed", Finding2},
-    {"party-swaps/final-save-fails/deleteCloud#1/unknown-applied", Finding7},
-    {"party-swaps/final-save-fails/persistLocal#1/fail-but-landed", Finding2},
-    {"party-swaps/upload1-reject-first/persistLocal#1/fail-but-landed", Finding2},
-    {"party-swaps/upload1-reject-first/persistLocal#2/fail-but-landed", Finding2},
-    {"party-swaps/upload1-unknown/persistLocal#1/fail-but-landed", Finding2},
-    {"party-swaps/upload1-unknown/persistLocal#2/fail-but-landed", Finding2},
-};
+// when one passes, the fix removes it here. Each entry names its issue.
+const std::map<std::string, const char*> KnownFailures = {};
 
 struct SweepScenario {
     const char* name;
@@ -634,7 +605,8 @@ struct SweepBase {
 // upload, the retry after a partial refusal, and the cloud deletes that undo uploads.
 TEST(fault_injection_sweep) {
     const std::vector<SweepScenario> scenarios = {
-        {"mixed", mixedScenario()}, {"cloud-chain", cloudChainScenario()}, {"party-swaps", partySwapScenario()}};
+        {"mixed", mixedScenario()}, {"cloud-chain", cloudChainScenario()}, {"party-swaps", partySwapScenario()},
+        {"list-boxes", listBoxScenario()}};
     const std::vector<SweepBase> bases = {{"clean", {}},
                                           {"upload1-unknown", {{Call::UploadBatch, 1, Mode::UnknownApplied}}},
                                           {"upload1-reject-first", {{Call::UploadBatch, 1, Mode::RejectFirst}}},
@@ -697,7 +669,8 @@ TEST(fault_injection_sweep) {
 // ---------------------------------------------------------------- randomized drafts
 
 // A party of 1 to 6, a few Pokemon in two local boxes and two cloud boxes, then 1 to 8 random
-// swaps or deletes. Like the UI, the draft never empties the party.
+// swaps or deletes. Like the UI, the draft never empties the party; here it also keeps one
+// member that is not an egg. Half of the saves have list boxes (Gen 1/2), packed from the start.
 Case randomCase(std::mt19937& rng) {
     const auto pick = [&rng](std::size_t count) {
         return std::uniform_int_distribution<std::size_t>(0, count - 1)(rng);
@@ -725,6 +698,15 @@ Case randomCase(std::mt19937& rng) {
         } while (c.before.count(slot));
         c.before[slot] = next++;
     }
+    c.listBoxes = pick(2) == 0;
+    if (c.listBoxes) {
+        packLists(c.before, true);
+    }
+    for (const auto& [slot, mon] : c.before) {
+        if (slot != party(0) && pick(6) == 0) {
+            c.eggs.insert(mon);
+        }
+    }
     c.after = c.before;
     for (std::size_t operations = 1 + pick(8); operations > 0; --operations) {
         State draft = c.after;
@@ -736,7 +718,7 @@ Case randomCase(std::mt19937& rng) {
         } else {
             swapSlots(draft, chosen->first, slots[pick(slots.size())]);
         }
-        if (hasParty(draft)) {
+        if (hasHatchedParty(draft, c.eggs)) {
             c.after = std::move(draft);
             c.trashed = std::move(trashed);
         }
@@ -744,14 +726,38 @@ Case randomCase(std::mt19937& rng) {
     return c;
 }
 
+// Each draft runs once clean, then once with one random call failing.
 TEST(randomized_drafts) {
     constexpr std::uint32_t Drafts = 1000;
     for (std::uint32_t index = 0; index < Drafts; ++index) {
         const std::uint32_t seed = runSeed + index;
         std::mt19937 rng(seed);
         const Case c = randomCase(rng);
-        Failures found;
-        expectClean(found, c);
+        const Outcome clean = execute(c, {});
+        Failures found = checkInvariants(c, clean);
+        // A list box parks a Pokemon only after its last one, so a draft can lack a parking slot.
+        const bool heldBack = c.listBoxes && !clean.plan.heldBack.empty();
+        if (!heldBack && (!clean.result.success || !clean.result.issues.empty())) {
+            found.push_back("expected a clean commit, got " + text(clean.result));
+            found.push_back("before " + text(c.before) + ", draft " + text(c.after));
+        }
+        std::vector<Fault> faults;
+        for (std::size_t call = 0; call < clean.calls.size(); ++call) {
+            for (int occurrence = 1; occurrence <= clean.calls[call]; ++occurrence) {
+                for (const Mode mode : modesFor(static_cast<Call>(call))) {
+                    faults.push_back({static_cast<Call>(call), occurrence, mode});
+                }
+            }
+        }
+        if (!faults.empty()) {
+            const Fault fault = faults[std::uniform_int_distribution<std::size_t>(0, faults.size() - 1)(rng)];
+            const Failures faulty = checkInvariants(c, execute(c, {fault}));
+            if (!faulty.empty()) {
+                found.push_back(std::string("with ") + callName(fault.call) + "#" + std::to_string(fault.occurrence)
+                                + "/" + modeName(fault.mode) + ":");
+                append(found, faulty);
+            }
+        }
         if (!found.empty()) {
             failures.push_back("draft seed " + std::to_string(seed) + " (rerun alone: make test SEED="
                                + std::to_string(seed) + ")");
@@ -762,37 +768,36 @@ TEST(randomized_drafts) {
 }
 
 // ---------------------------------------------------------------- issue #1 regressions
-// Each scenario of issue #1 (commit integrity). They must fail until #1 is fixed; the fix
-// turns EXPECTED_FAILURE into TEST.
+// Each scenario of issue #1 (commit integrity).
 
-// Finding 1: the server answers Done but stored one item fewer.
-EXPECTED_FAILURE(issue1_f1_upload_reply_count_not_checked, "M2 is not in the report but ends at nowhere") {
+// Finding 1: the server answers Done but stored, and counts, one item fewer.
+TEST(issue1_f1_upload_reply_count_checked) {
     expectInvariants(failures, scenario({{box(0, 0), 1}, {box(0, 1), 2}}, {{bank(0), 1}, {bank(1), 2}}),
                      {{Call::UploadBatch, 1, Mode::DoneMissingLast}});
 }
 
 // Finding 1: the server refused one item but stored the others; the retry is refused as occupied.
-EXPECTED_FAILURE(issue1_f1_retry_after_partial_store, "M2: the report says it is in the save only") {
+TEST(issue1_f1_retry_after_partial_store) {
     expectInvariants(failures,
                      scenario({{box(0, 0), 1}, {box(0, 1), 2}, {box(0, 2), 3}}, {{bank(0), 1}, {bank(1), 2}, {bank(2), 3}}),
                      {{Call::UploadBatch, 1, Mode::RejectFirstStoreRest}});
 }
 
-// Finding 2: the final save reports an error but reached the disk; compensation deletes the cloud copy.
-EXPECTED_FAILURE(issue1_f2_final_save_error_but_landed, "M1 is in the report but ends at nowhere") {
-    expectInvariants(failures, scenario({{box(0, 0), 1}}, {{bank(0), 1}}), {{Call::PersistLocal, 2, Mode::FailButLanded}});
+// Finding 2: the final save reports an error but reached the disk; the upload is kept.
+TEST(issue1_f2_final_save_error_but_landed) {
+    const Case c = scenario({{box(0, 0), 1}}, {{bank(0), 1}});
+    const Outcome outcome = execute(c, {{Call::PersistLocal, 1, Mode::FailButLanded}});
+    append(failures, checkInvariants(c, outcome));
+    if (!outcome.result.success || !outcome.result.issues.empty()) {
+        failures.push_back("expected a clean commit, got " + text(outcome.result));
+    }
 }
 
-// Finding 3: a Gen 1/2 save packs its boxes on the first write; the second write uses old indexes.
-EXPECTED_FAILURE(issue1_f3_gen12_compaction_shifts_slots, "M5 is not in the report but ends at box0.0+box0.3") {
-    Case c = scenario({{box(0, 0), 1}, {box(0, 1), 2}, {box(0, 2), 3}, {box(0, 3), 4}, {bank(0), 5}},
-                      {{bank(0), 1}, {box(0, 0), 5}, {box(1, 0), 2}, {box(0, 2), 3}, {box(0, 3), 4}});
-    c.compactBoxes = true;
-    expectInvariants(failures, c, {});
-}
+// Finding 3: a Gen 1/2 save packs its boxes on every write; a move out and a swap in one commit.
+TEST(issue1_f3_gen12_move_out_and_swap) { expectClean(failures, listBoxScenario()); }
 
 // Finding 4: party [A, B], cloud C dropped into the party, A and B moved to a box; C's claim times out.
-EXPECTED_FAILURE(issue1_f4_claim_drop_empties_party, "the saved party is empty") {
+TEST(issue1_f4_claim_drop_keeps_party) {
     Case c;
     c.before = {{party(0), 1}, {party(1), 2}, {bank(0), 3}};
     c.after = {{party(2), 3}, {box(0, 0), 1}, {box(0, 1), 2}};
@@ -800,7 +805,7 @@ EXPECTED_FAILURE(issue1_f4_claim_drop_empties_party, "the saved party is empty")
 }
 
 // Finding 4: the same with an egg left behind.
-EXPECTED_FAILURE(issue1_f4_claim_drop_leaves_eggs_only, "the saved party holds only eggs") {
+TEST(issue1_f4_claim_drop_keeps_a_hatched_member) {
     Case c;
     c.before = {{party(0), 1}, {party(1), 2}, {bank(0), 3}};
     c.after = {{party(0), 1}, {party(2), 3}, {box(0, 0), 2}};
@@ -808,23 +813,23 @@ EXPECTED_FAILURE(issue1_f4_claim_drop_leaves_eggs_only, "the saved party holds o
     expectInvariants(failures, c, {{Call::ClaimCloud, 1, Mode::UnknownNotApplied}});
 }
 
-// Finding 5: the first save removes a party member without packing; the final save fails.
-EXPECTED_FAILURE(issue1_f5_failed_final_save_leaves_party_gap, "the saved party has a gap") {
+// Finding 5: a party member leaves for the cloud, another for a box; the save fails.
+TEST(issue1_f5_failed_save_leaves_no_party_gap) {
     Case c;
     c.before = {{party(0), 1}, {party(1), 2}, {party(2), 3}};
     c.after = {{bank(0), 1}, {box(0, 0), 2}, {party(2), 3}};
-    expectInvariants(failures, c, {{Call::PersistLocal, 2, Mode::Fail}});
+    expectInvariants(failures, c, {{Call::PersistLocal, 1, Mode::Fail}});
 }
 
-// Finding 6: the box listing has no payload for an occupied slot; the stored upload is read as refused.
-EXPECTED_FAILURE(issue1_f6_listing_without_payload, "M1: the report says it is in the save only") {
+// Finding 6: the box listing has no payload for an occupied slot; the upload stays unconfirmed.
+TEST(issue1_f6_listing_without_payload) {
     Case c = scenario({{box(0, 0), 1}}, {{bank(0), 1}});
     c.listingWithoutPayload = true;
     expectInvariants(failures, c, {{Call::UploadBatch, 1, Mode::UnknownApplied}});
 }
 
 // Finding 7: the per-slot delete fallback deleted the first slot, then failed.
-EXPECTED_FAILURE(issue1_f7_partial_cloud_delete, "M1: the report says it exists twice") {
+TEST(issue1_f7_partial_cloud_delete) {
     expectInvariants(failures, scenario({{bank(0), 1}, {bank(1), 2}}, {{box(0, 0), 1}, {box(0, 1), 2}}),
                      {{Call::DeleteCloud, 1, Mode::DeleteFirstThenFail}});
 }
@@ -840,10 +845,63 @@ TEST(issue1_f8_vanished_pokemon_is_held_back) {
     }
 }
 
-// Finding 9: a group dropped at claim time after its cloud moves ran; the report says nothing changed.
-EXPECTED_FAILURE(issue1_f9_claim_drop_after_cloud_move, "M1: the report says nothing changed") {
+// Finding 9: a group dropped at claim time after its cloud moves ran.
+TEST(issue1_f9_claim_drop_after_cloud_move) {
     expectInvariants(failures, scenario({{bank(0), 1}, {bank(1), 2}}, {{bank(1), 1}, {box(0, 0), 2}}),
                      {{Call::ClaimCloud, 1, Mode::UnknownNotApplied}});
+}
+
+// Finding 10: A 1->2, B 2->3, C 3->box; both moves run, so C is in slot 1. Then the save fails.
+TEST(issue1_f10_save_fails_after_cloud_moves) {
+    const Case c = scenario({{bank(0), 1}, {bank(1), 2}, {bank(2), 3}}, {{bank(1), 1}, {bank(2), 2}, {box(0, 0), 3}});
+    const Outcome outcome = execute(c, {{Call::PersistLocal, 1, Mode::Fail}});
+    append(failures, checkInvariants(c, outcome));
+    const bool named = std::any_of(outcome.result.issues.begin(), outcome.result.issues.end(), [](const CommitIssue& issue) {
+        return issue.pokemon == "M3" && issue.location == bank(0);
+    });
+    if (!named) {
+        failures.push_back("expected M3 reported in bank0.0, got " + text(outcome.result));
+    }
+}
+
+// Finding 10 through the first save: the cloud chain parks M32, then that save fails.
+TEST(issue1_f10_first_save_fails_after_cloud_moves) {
+    const Case c = cloudChainScenario();
+    const Outcome outcome = execute(c, {{Call::PersistLocal, 1, Mode::Fail}});
+    append(failures, checkInvariants(c, outcome));
+    const bool named = std::any_of(outcome.result.issues.begin(), outcome.result.issues.end(), [](const CommitIssue& issue) {
+        return issue.pokemon == "M32" && issue.location == bank(0) && issue.reason == IssueReason::MovedInCloud;
+    });
+    if (outcome.result.stop != CommitStop::SaveFailed || !named) {
+        failures.push_back("expected a SaveFailed stop and M32 reported in bank0.0, got " + text(outcome.result));
+    }
+}
+
+// Finding 2: a failed write whose disk cannot be read back may have landed: the upload stays.
+TEST(issue1_f2_unknown_disk_keeps_the_upload) {
+    const Case c = scenario({{box(0, 0), 1}}, {{bank(0), 1}});
+    const Outcome outcome = execute(c, {{Call::PersistLocal, 1, Mode::FailDiskUnknown}});
+    append(failures, checkInvariants(c, outcome));
+    if (outcome.finalState.count(bank(0)) == 0) {
+        failures.push_back("the upload was undone although the save may have cleared its slot");
+    }
+}
+
+// Finding 6: the upload answers Unknown and the listing shows its slot empty: the Pokemon it
+// replaced may be gone from the cloud, so the parked copy stays in the save.
+TEST(issue1_f6_emptied_slot_keeps_the_parked_download) {
+    expectInvariants(failures, scenario({{box(0, 0), 1}, {bank(0), 2}}, {{box(0, 0), 2}, {bank(0), 1}}),
+                     {{Call::UploadBatch, 1, Mode::UnknownCleared}});
+}
+
+// A cloud move that answers Unknown but landed is confirmed by the listing; the commit goes on.
+TEST(unknown_cloud_move_confirmed_by_listing) {
+    const Case c = cloudChainScenario();
+    const Outcome outcome = execute(c, {{Call::MoveCloud, 1, Mode::UnknownApplied}});
+    append(failures, checkInvariants(c, outcome));
+    if (!outcome.result.success || !outcome.result.issues.empty()) {
+        failures.push_back("expected a clean commit, got " + text(outcome.result));
+    }
 }
 
 } // namespace
